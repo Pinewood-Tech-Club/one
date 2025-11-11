@@ -2,3 +2,9 @@ env/
 .env
 *.db
 .DS_Store
+.vscode/
+__pycache__/
+research/
+cloudflared-config.yml
+chroma_db/
+testing/
