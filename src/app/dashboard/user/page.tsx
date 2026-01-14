@@ -10,7 +10,6 @@ interface User {
 
 export default function UserPage() {
   const [user, setUser] = useState<User | null>(null);
-  const [logoutLoading, setLogoutLoading] = useState(false);
 
   // Get user info on mount
   useEffect(() => {
