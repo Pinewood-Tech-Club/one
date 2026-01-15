@@ -1,16 +1,15 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useQuery, useMutation } from 'convex/react';
-import { api } from '../../convex/_generated/api';
-import { usePathname, useRouter } from 'next/navigation';
-import { useLoading } from '@/context/LoadingContext';
+import { usePathname } from 'next/navigation';
+import { LoadingProvider, useLoading } from '@/context/LoadingContext';
 import { UserProvider } from '@/context/UserContext';
 import UpcomingPage from '@/app/dashboard/upcoming/page';
 import SchedulePage from '@/app/dashboard/schedule/page';
 import GradesPage from '@/app/dashboard/grades/page';
 import ChatPage from '@/app/dashboard/chat/page';
 import UserPage from '@/app/dashboard/user/page';
+import { LoadingScreen } from '@/components/LoadingScreen';
 
 type Page = 'upcoming' | 'schedule' | 'grades' | 'chat' | 'user';
 
@@ -30,7 +29,7 @@ function pageToPathname(page: Page): string {
   return `/${page}`;
 }
 
-export function AppLayout() {
+function AppLayoutInner() {
   const pathname = usePathname();
   const [userName, setUserName] = useState<string>('Loading...');
   const [userId, setUserId] = useState<string | null>(null);
@@ -161,8 +160,17 @@ export function AppLayout() {
           </div>
         </div>
       </div>
-    </div>
+      </div>
     </UserProvider>
+  );
+}
+
+export function AppLayout() {
+  return (
+    <LoadingProvider>
+      <AppLayoutInner />
+      <LoadingScreen />
+    </LoadingProvider>
   );
 }
 
@@ -172,4 +180,3 @@ const ScheduleContent = SchedulePage;
 const GradesContent = GradesPage;
 const ChatContent = ChatPage;
 const UserContent = UserPage;
-

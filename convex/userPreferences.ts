@@ -1,41 +1,47 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import { getAuthenticatedUser, getOptionalAuthenticatedUser } from "./auth";
 
-// Get user's sidebar preference
+// Get user's sidebar preference (auth-protected)
 export const getSidebarCollapsed = query({
-  args: { userId: v.string() },
-  handler: async (ctx, args) => {
+  args: {},
+  handler: async (ctx) => {
+    const user = await getOptionalAuthenticatedUser(ctx);
+    if (!user) {
+      return false;
+    }
+
     const preference = await ctx.db
       .query("userPreferences")
-      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .withIndex("by_user", (q) => q.eq("userId", user.userId))
       .first();
-    
+
     return preference?.sidebarCollapsed ?? false;
   },
 });
 
-// Set user's sidebar preference
+// Set user's sidebar preference (auth-protected)
 export const setSidebarCollapsed = mutation({
-  args: { 
-    userId: v.string(),
+  args: {
     collapsed: v.boolean(),
   },
   handler: async (ctx, args) => {
+    const user = await getAuthenticatedUser(ctx);
+
     const existing = await ctx.db
       .query("userPreferences")
-      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .withIndex("by_user", (q) => q.eq("userId", user.userId))
       .first();
-    
+
     if (existing) {
       await ctx.db.patch(existing._id, {
         sidebarCollapsed: args.collapsed,
       });
     } else {
       await ctx.db.insert("userPreferences", {
-        userId: args.userId,
+        userId: user.userId,
         sidebarCollapsed: args.collapsed,
       });
     }
   },
 });
-

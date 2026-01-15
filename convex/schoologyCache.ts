@@ -1,20 +1,26 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { query, mutation } from "./_generated/server";
+import { getOptionalAuthenticatedUser } from "./auth";
 
 // ============================================================================
-// QUERIES - Frontend reads cached data
+// QUERIES - Frontend reads cached data (auth-protected)
 // ============================================================================
 
 /**
- * Get all cached courses for a user
+ * Get all cached courses for the authenticated user
  * Returns full course objects from Schoology API
  */
 export const getCourses = query({
-  args: { userId: v.string() },
-  handler: async (ctx, args) => {
+  args: {},
+  handler: async (ctx) => {
+    const user = await getOptionalAuthenticatedUser(ctx);
+    if (!user) {
+      return [];
+    }
+
     const courses = await ctx.db
       .query("schoologyCourses")
-      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .withIndex("by_user", (q) => q.eq("userId", user.userId))
       .collect();
 
     return courses.map(course => ({
@@ -25,15 +31,20 @@ export const getCourses = query({
 });
 
 /**
- * Get all cached assignments for a user
+ * Get all cached assignments for the authenticated user
  * Returns full assignment objects from Schoology API
  */
 export const getAssignments = query({
-  args: { userId: v.string() },
-  handler: async (ctx, args) => {
+  args: {},
+  handler: async (ctx) => {
+    const user = await getOptionalAuthenticatedUser(ctx);
+    if (!user) {
+      return [];
+    }
+
     const assignments = await ctx.db
       .query("schoologyAssignments")
-      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .withIndex("by_user", (q) => q.eq("userId", user.userId))
       .collect();
 
     return assignments.map(assignment => ({
@@ -50,14 +61,18 @@ export const getAssignments = query({
  */
 export const getAssignmentsByCourse = query({
   args: {
-    userId: v.string(),
     courseId: v.string(),
   },
   handler: async (ctx, args) => {
+    const user = await getOptionalAuthenticatedUser(ctx);
+    if (!user) {
+      return [];
+    }
+
     const assignments = await ctx.db
       .query("schoologyAssignments")
       .withIndex("by_user_and_course", (q) =>
-        q.eq("userId", args.userId).eq("courseId", args.courseId)
+        q.eq("userId", user.userId).eq("courseId", args.courseId)
       )
       .collect();
 
@@ -71,6 +86,7 @@ export const getAssignmentsByCourse = query({
 
 // ============================================================================
 // MUTATIONS - Backend updates cached data
+// These are called by the trusted backend after user authentication
 // ============================================================================
 
 /**
@@ -211,22 +227,21 @@ export const clearCache = mutation({
       .query("schoologyCourses")
       .withIndex("by_user", (q) => q.eq("userId", args.userId))
       .collect();
-    
+
     for (const course of courses) {
       await ctx.db.delete(course._id);
     }
-    
+
     // Delete all assignments
     const assignments = await ctx.db
       .query("schoologyAssignments")
       .withIndex("by_user", (q) => q.eq("userId", args.userId))
       .collect();
-    
+
     for (const assignment of assignments) {
       await ctx.db.delete(assignment._id);
     }
-    
+
     return { success: true };
   },
 });
-
