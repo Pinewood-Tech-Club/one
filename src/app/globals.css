@@ -20,3 +20,8 @@
   --color-fd-accent-foreground: hsl(0, 0%, 9%);
   --color-fd-ring: hsl(0, 0%, 63.9%); */
 }
+
+/* Smooth color transitions for navbar text when background changes */
+[data-navbar] * {
+  transition: color 200ms ease-out;
+}

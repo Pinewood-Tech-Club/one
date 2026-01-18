@@ -26,17 +26,17 @@ function getGreetingByHour(hour: number): string {
 function formatGreeting(type: string, name: string): string {
   switch (type) {
     case 'morning':
-      return `Good morning, ${name}!`;
+      return `Good morning, ${name}`;
     case 'afternoon':
-      return `Good afternoon, ${name}!`;
+      return `Good afternoon, ${name}`;
     case 'evening':
-      return `Good evening, ${name}!`;
+      return `Good evening, ${name}`;
     case 'night':
-      return `Good night, ${name}!`;
+      return `Good night, ${name}`;
     case 'sleep':
-      return `Go to sleep, ${name}!`;
+      return `Go to sleep, ${name}`;
     default:
-      return `Hello, ${name}!`;
+      return `Hello, ${name}`;
   }
 }
 
