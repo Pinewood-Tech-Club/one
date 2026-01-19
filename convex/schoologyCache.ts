@@ -84,6 +84,30 @@ export const getAssignmentsByCourse = query({
   },
 });
 
+/**
+ * Get upcoming assignments for the authenticated user
+ * Returns assignments due within a specified timeframe, sorted by due date
+ */
+export const getUpcoming = query({
+  args: {},
+  handler: async (ctx) => {
+    const user = await getOptionalAuthenticatedUser(ctx);
+    if (!user) {
+      return [];
+    }
+
+    const upcoming = await ctx.db
+      .query("schoologyUpcoming")
+      .withIndex("by_user", (q) => q.eq("userId", user.userId))
+      .collect();
+
+    return upcoming.map(item => ({
+      ...item.data, // Spread the full assignment object with course info
+      _lastUpdated: item.lastUpdated,
+    }));
+  },
+});
+
 // ============================================================================
 // MUTATIONS - Backend updates cached data
 // These are called by the trusted backend after user authentication
@@ -217,18 +241,18 @@ export const updateAssignments = mutation({
 
 /**
  * Update upcoming assignments cache for a user
- * Called by backend after fetching from Schoology API
+ * Called by backend after fetching upcoming assignments
+ * Stores full assignment objects with course metadata
  */
 export const updateUpcoming = mutation({
   args: {
     userId: v.string(),
-    assignments: v.array(v.any()), // Accept full assignment objects
+    assignments: v.array(v.any()), // Accept full assignment objects with course info
   },
   handler: async (ctx, args) => {
     const timestamp = Date.now();
 
-    // Delete existing upcoming assignments for this user
-    // We replace the entire list because it's a "snapshot" of upcoming items
+    // Clear existing upcoming assignments for this user
     const existing = await ctx.db
       .query("schoologyUpcoming")
       .withIndex("by_user", (q) => q.eq("userId", args.userId))
@@ -238,14 +262,14 @@ export const updateUpcoming = mutation({
       await ctx.db.delete(item._id);
     }
 
-    // Insert new assignments
+    // Insert new upcoming assignments
     for (const assignment of args.assignments) {
       await ctx.db.insert("schoologyUpcoming", {
         userId: args.userId,
         assignmentId: String(assignment.id),
-        data: assignment,
-        courseTitle: assignment.course_title || "Unknown Course",
-        dueDate: assignment.due,
+        data: assignment, // Full assignment object with course_title and section_id
+        courseTitle: assignment.course_title || "",
+        dueDate: assignment.due || "",
         lastUpdated: timestamp,
       });
     }
@@ -279,6 +303,16 @@ export const clearCache = mutation({
 
     for (const assignment of assignments) {
       await ctx.db.delete(assignment._id);
+    }
+
+    // Delete all upcoming assignments
+    const upcoming = await ctx.db
+      .query("schoologyUpcoming")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .collect();
+
+    for (const item of upcoming) {
+      await ctx.db.delete(item._id);
     }
 
     return { success: true };

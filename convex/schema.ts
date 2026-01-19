@@ -30,12 +30,13 @@ export default defineSchema({
 
   schoologyUpcoming: defineTable({
     userId: v.string(),
-    assignmentId: v.string(),
-    data: v.any(),
-    courseTitle: v.string(),
-    dueDate: v.string(),
-    lastUpdated: v.number(),
-  }).index("by_user", ["userId"])
+    assignmentId: v.string(), // Schoology assignment ID
+    data: v.any(), // Full assignment object with course info
+    courseTitle: v.string(), // Course title for filtering
+    dueDate: v.string(), // Due date string for sorting
+    lastUpdated: v.number(), // timestamp
+  })
+    .index("by_user", ["userId"])
     .index("by_user_and_due", ["userId", "dueDate"]),
 });
 
