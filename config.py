@@ -41,10 +41,6 @@ class Config:
     # Convex configuration
     CONVEX_URL = os.environ.get("CONVEX_URL", "https://hearty-lemur-131.convex.cloud")
 
-    # Schoology Service
-    SCHOOLOGY_SERVICE_KEY = os.environ.get("SCHOOLOGY_SERVICE_KEY")
-    SCHOOLOGY_SERVICE_URL = os.environ.get("SCHOOLOGY_SERVICE_URL", "http://localhost:3113")
-
     @classmethod
     def validate(cls):
         """Validate configuration and print status"""

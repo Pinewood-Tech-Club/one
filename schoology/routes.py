@@ -1,26 +1,17 @@
 """
-Schoology API routes (Proxy to Schoology Service)
+Schoology API routes (using schoology_service package)
 """
 from flask import Blueprint, jsonify, redirect, request
 from config import Config
 from auth.middleware import auth_required
+from schoology_service import SchoologyService, start_oauth, complete_oauth
 from db.tokens import (
-    delete_schoology_tokens, 
-    save_schoology_access_tokens, 
+    get_schoology_tokens,
     save_schoology_request_tokens,
-    get_schoology_tokens
+    save_schoology_access_tokens,
+    delete_schoology_tokens
 )
 from db.encryption import decrypt_token
-from services.schoology_client import (
-    service_oauth_start,
-    service_oauth_callback,
-    service_status,
-    service_courses,
-    service_upcoming,
-    service_refresh,
-    service_disconnect
-)
-import sqlite3
 
 # Blueprint for /oauth/schoology/* routes
 oauth_bp = Blueprint('schoology_oauth', __name__, url_prefix='/oauth/schoology')
@@ -29,16 +20,36 @@ oauth_bp = Blueprint('schoology_oauth', __name__, url_prefix='/oauth/schoology')
 schoology_api_bp = Blueprint('schoology_api', __name__, url_prefix='/api/schoology')
 
 
-# Helper to get decrypted tokens
-def get_decrypted_tokens(user_id):
+def _create_service(user_id: int) -> SchoologyService | None:
+    """
+    Create a SchoologyService instance for the given user
+
+    Args:
+        user_id: User ID
+
+    Returns:
+        SchoologyService instance or None if tokens not found
+    """
     tokens = get_schoology_tokens(user_id)
-    if not tokens:
-        return None, None
-        
-    access_token = decrypt_token(tokens["access_token"]) if tokens.get("access_token") else None
-    access_token_secret = decrypt_token(tokens["access_token_secret"]) if tokens.get("access_token_secret") else None
-    
-    return access_token, access_token_secret
+    if not tokens or not tokens.get("access_token") or not tokens.get("access_token_secret"):
+        return None
+
+    access_token = decrypt_token(tokens["access_token"])
+    access_token_secret = decrypt_token(tokens["access_token_secret"])
+
+    if not access_token or not access_token_secret:
+        return None
+
+    return SchoologyService(
+        user_id=str(user_id),
+        access_token=access_token,
+        access_token_secret=access_token_secret,
+        consumer_key=Config.SCHOOLOGY_CONSUMER_KEY,
+        consumer_secret=Config.SCHOOLOGY_CONSUMER_SECRET,
+        convex_url=Config.CONVEX_URL,
+        schoology_domain=Config.SCHOOLOGY_DOMAIN
+    )
+
 
 # OAuth routes
 @oauth_bp.route("/start")
@@ -46,22 +57,26 @@ def get_decrypted_tokens(user_id):
 def schoology_oauth_start(user):
     """Start Schoology OAuth flow by redirecting to Schoology authorization page."""
     try:
-        # The callback URL is still this backend's callback endpoint
         callback_url = f"{Config.BACKEND_URL}/oauth/schoology/callback"
-        
-        result = service_oauth_start(callback_url)
-        auth_url = result.get("auth_url")
-        request_token = result.get("request_token")
-        request_token_secret = result.get("request_token_secret")
-        
-        if auth_url and request_token and request_token_secret:
-            # Save request tokens locally so we can verify the callback
-            save_schoology_request_tokens(user["id"], request_token, request_token_secret)
-            return redirect(auth_url)
-        
-        return redirect(f"{Config.FRONTEND_URL}?error=schoology_oauth_failed")
+
+        # Start OAuth flow using the package
+        auth_url, request_token, request_token_secret = start_oauth(
+            consumer_key=Config.SCHOOLOGY_CONSUMER_KEY,
+            consumer_secret=Config.SCHOOLOGY_CONSUMER_SECRET,
+            callback_url=callback_url,
+            schoology_domain=Config.SCHOOLOGY_DOMAIN
+        )
+
+        # Save request tokens for this user
+        save_schoology_request_tokens(user["id"], request_token, request_token_secret)
+
+        # Redirect user to Schoology authorization page
+        return redirect(auth_url)
+
     except Exception as e:
         print(f"Schoology OAuth start error: {e}")
+        import traceback
+        traceback.print_exc()
         return redirect(f"{Config.FRONTEND_URL}?error=schoology_oauth_failed")
 
 
@@ -79,7 +94,7 @@ def schoology_oauth_callback():
             return redirect(f"{Config.FRONTEND_URL}?error=schoology_callback_failed")
 
         # Find which user this request token belongs to
-        # We still need to do this locally because we stored the request token locally
+        import sqlite3
         conn = sqlite3.connect(Config.MAIN_DB_PATH)
         cursor = conn.cursor()
         cursor.execute(
@@ -103,11 +118,14 @@ def schoology_oauth_callback():
             print(f"[ERROR] Could not find user for oauth_token: {oauth_token}")
             return redirect(f"{Config.FRONTEND_URL}?error=schoology_callback_failed")
 
-        # Call service to exchange tokens
-        result = service_oauth_callback(oauth_token, request_token_secret)
-        
-        access_token = result.get("access_token")
-        access_token_secret = result.get("access_token_secret")
+        # Complete OAuth flow using the package
+        access_token, access_token_secret = complete_oauth(
+            consumer_key=Config.SCHOOLOGY_CONSUMER_KEY,
+            consumer_secret=Config.SCHOOLOGY_CONSUMER_SECRET,
+            request_token=oauth_token,
+            request_token_secret=request_token_secret,
+            schoology_domain=Config.SCHOOLOGY_DOMAIN
+        )
 
         if not access_token or not access_token_secret:
             return redirect(f"{Config.FRONTEND_URL}?error=schoology_callback_failed")
@@ -119,6 +137,7 @@ def schoology_oauth_callback():
 
         # Redirect to frontend with success parameter
         return redirect(f"{Config.FRONTEND_URL}?schoology_connected=true")
+
     except Exception as e:
         print(f"[ERROR] Schoology OAuth callback error: {e}")
         import traceback
@@ -132,12 +151,23 @@ def schoology_oauth_callback():
 def schoology_status(user):
     """Check if user has connected their Schoology account"""
     try:
-        at, ats = get_decrypted_tokens(user["id"])
-        # If no tokens locally, we know it's not connected
-        if not at or not ats:
+        service = _create_service(user["id"])
+        if not service:
             return jsonify({"connected": False})
-            
-        return jsonify(service_status(at, ats))
+
+        # Test if credentials are still valid
+        try:
+            user_info = service.get_user_info()
+            return jsonify({
+                "connected": True,
+                "schoology_user": user_info
+            })
+        except Exception as e:
+            print(f"Schoology API error: {e}")
+            import traceback
+            traceback.print_exc()
+            # Don't delete tokens on first error - could be temporary API issue
+            return jsonify({"connected": False, "error": str(e)})
 
     except Exception as e:
         print(f"Schoology status error: {str(e)}")
@@ -149,48 +179,80 @@ def schoology_status(user):
 def schoology_courses(user):
     """Get user's Schoology courses"""
     try:
-        at, ats = get_decrypted_tokens(user["id"])
-        if not at or not ats:
+        print(f"[DEBUG] /api/schoology/courses called for user_id: {user['id']}")
+
+        service = _create_service(user["id"])
+        if not service:
+            print(f"[DEBUG] Failed to create Schoology service for user_id: {user['id']}")
             return jsonify({"error": "Schoology account not connected"}), 400
 
-        return jsonify(service_courses(at, ats))
+        print(f"[DEBUG] Fetching courses from Schoology API...")
+        courses = service.get_courses()  # Automatically syncs to Convex
+        print(f"[DEBUG] Retrieved {len(courses)} courses")
+
+        return jsonify({"courses": courses})
 
     except Exception as e:
         print(f"[ERROR] Schoology courses error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 
 @schoology_api_bp.route("/upcoming")
 @auth_required
 def schoology_upcoming(user):
-    """Get upcoming assignments"""
+    """Get upcoming assignments within the next N days"""
     try:
-        at, ats = get_decrypted_tokens(user["id"])
-        if not at or not ats:
+        print(f"[DEBUG] /api/schoology/upcoming called for user_id: {user['id']}")
+
+        service = _create_service(user["id"])
+        if not service:
+            print(f"[DEBUG] Failed to create Schoology service for user_id: {user['id']}")
             return jsonify({"error": "Schoology account not connected"}), 400
-            
+
         days = request.args.get("days", 7, type=int)
-        
-        return jsonify(service_upcoming(user["id"], at, ats, days))
-        
+        print(f"[DEBUG] Fetching upcoming assignments for next {days} days...")
+
+        assignments = service.get_upcoming_assignments(days=days)  # Automatically syncs to Convex
+        print(f"[DEBUG] Retrieved {len(assignments)} upcoming assignments")
+
+        return jsonify({"assignments": assignments})
+
     except Exception as e:
         print(f"[ERROR] Schoology upcoming error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 
 @schoology_api_bp.route("/refresh", methods=["POST"])
 @auth_required
 def schoology_refresh(user):
-    """Refresh Schoology data and update Convex cache"""
+    """Refresh all Schoology data and update Convex cache"""
     try:
-        at, ats = get_decrypted_tokens(user["id"])
-        if not at or not ats:
+        print(f"[DEBUG] /api/schoology/refresh called for user_id: {user['id']}")
+
+        service = _create_service(user["id"])
+        if not service:
+            print(f"[DEBUG] Failed to create Schoology service for user_id: {user['id']}")
             return jsonify({"error": "Schoology account not connected"}), 400
 
-        return jsonify(service_refresh(user["id"], at, ats))
+        print(f"[DEBUG] Refreshing all Schoology data...")
+        result = service.refresh_all()  # Fetches courses + assignments, syncs to Convex
+        print(f"[DEBUG] Refresh result: {result}")
+
+        return jsonify({
+            "success": True,
+            "coursesUpdated": result.get("courses_updated", 0),
+            "assignmentsUpdated": result.get("assignments_updated", 0),
+            "message": "Cache updated successfully"
+        })
 
     except Exception as e:
         print(f"[ERROR] Schoology refresh error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 
@@ -199,12 +261,18 @@ def schoology_refresh(user):
 def schoology_disconnect(user):
     """Disconnect Schoology account"""
     try:
-        # Call service to clear cache
-        service_disconnect(user["id"])
-        
-        # Delete tokens locally
+        # Create service to clear cache
+        service = _create_service(user["id"])
+        if service:
+            service.disconnect()  # Clear Convex cache
+
+        # Delete tokens
         delete_schoology_tokens(user["id"])
+
         return jsonify({"message": "Schoology account disconnected successfully"})
+
     except Exception as e:
         print(f"Schoology disconnect error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
