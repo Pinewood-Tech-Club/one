@@ -8,3 +8,4 @@ research/
 cloudflared-config.yml
 chroma_db/
 testing/
+keys/

@@ -39,12 +39,16 @@ def auth_google_callback():
         if "error" in user_response or "email" not in user_response:
             return redirect(f"{Config.FRONTEND_URL}?error=user_info_failed")
 
-        # Check if the email domain is allowed
-        email = user_response["email"]
-        if not email.endswith("@pinewood.edu"):
+        # Check if the email domain is allowed (legacy code)
+        # if not email.endswith("@pinewood.edu"):
+        #     return redirect(f"{Config.FRONTEND_URL}?error=invalid_domain")
+
+        # ensure hd param is in user response
+        if "hd" not in user_response or user_response["hd"] != "pinewood.edu":
             return redirect(f"{Config.FRONTEND_URL}?error=invalid_domain")
 
         # Get or create user in main database
+        email = user_response["email"]
         google_user_id = user_response.get("id", "")
         name = user_response.get("name", email.split("@")[0])
 

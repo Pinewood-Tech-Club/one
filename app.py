@@ -1,6 +1,7 @@
 """
 Pinewood One Backend - Main Application Entry Point
 """
+import os
 from flask import Flask
 from flask_cors import CORS
 from config import Config
@@ -18,7 +19,8 @@ def create_app():
     
     # Load configuration
     app.secret_key = Config.SECRET_KEY
-    app.config["SESSION_COOKIE_SECURE"] = True
+    # Only require HTTPS cookies in production (allows cookies on localhost)
+    app.config["SESSION_COOKIE_SECURE"] = os.environ.get("FLASK_ENV") == "production"
     app.config["SESSION_COOKIE_HTTPONLY"] = True
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
     app.config["PERMANENT_SESSION_LIFETIME"] = Config.SESSION_LIFETIME
