@@ -216,6 +216,45 @@ export const updateAssignments = mutation({
 });
 
 /**
+ * Update upcoming assignments cache for a user
+ * Called by backend after fetching from Schoology API
+ */
+export const updateUpcoming = mutation({
+  args: {
+    userId: v.string(),
+    assignments: v.array(v.any()), // Accept full assignment objects
+  },
+  handler: async (ctx, args) => {
+    const timestamp = Date.now();
+
+    // Delete existing upcoming assignments for this user
+    // We replace the entire list because it's a "snapshot" of upcoming items
+    const existing = await ctx.db
+      .query("schoologyUpcoming")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .collect();
+
+    for (const item of existing) {
+      await ctx.db.delete(item._id);
+    }
+
+    // Insert new assignments
+    for (const assignment of args.assignments) {
+      await ctx.db.insert("schoologyUpcoming", {
+        userId: args.userId,
+        assignmentId: String(assignment.id),
+        data: assignment,
+        courseTitle: assignment.course_title || "Unknown Course",
+        dueDate: assignment.due,
+        lastUpdated: timestamp,
+      });
+    }
+
+    return { success: true, count: args.assignments.length };
+  },
+});
+
+/**
  * Clear all cached data for a user
  * Useful when user disconnects Schoology
  */

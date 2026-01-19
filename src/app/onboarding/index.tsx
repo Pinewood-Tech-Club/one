@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { OnboardingBegin } from './onboarding/OnboardingBegin';
+import { OnboardingBegin } from '../../components/onboarding/OnboardingBegin';
 
 export function Onboarding() {
   return (
@@ -10,4 +10,3 @@ export function Onboarding() {
     </div>
   );
 }
-
