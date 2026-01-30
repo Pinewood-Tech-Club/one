@@ -3,6 +3,7 @@
 import { useTimeBasedGreeting } from '@/hooks/useTimeBasedGreeting';
 import { useUser } from '@/context/UserContext';
 import Image from 'next/image';
+import { UpcomingAssignmentsCarosuel } from '@/components/upcoming/UpcomingAssignmentsCarosuel';
 
 export default function UpcomingPage() {
   const { userName } = useUser();
@@ -20,6 +21,7 @@ export default function UpcomingPage() {
       </div>
       <div>
         <h1 className="text-3xl font-bold p-4 text-green-800 dark:text-green-400">Upcoming Assignments</h1>
+        <UpcomingAssignmentsCarosuel />
       </div>
     </div>
   );

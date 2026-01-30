@@ -18,7 +18,7 @@ const TOTAL_EXIT_DURATION_MS = Math.max(
 
 // Toggle this to true to add an extra delay before the loading screen disappears
 const DEBUG_DELAY = false;
-const DEBUG_DELAY_MS = 1000;
+const DEBUG_DELAY_MS = 0;
 
 export function LoadingScreen() {
   const { isLoading } = useLoading();

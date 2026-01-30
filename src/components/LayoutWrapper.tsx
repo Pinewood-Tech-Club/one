@@ -3,10 +3,16 @@
 import { useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { AppLayout } from './AppLayout';
+import { OnboardingController } from './onboarding/OnboardingController';
+
+type AuthState = {
+  isAuthenticated: boolean;
+  onboardingStep: string | null;
+} | null;
 
 export function LayoutWrapper({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+  const [authState, setAuthState] = useState<AuthState>(null);
 
   useEffect(() => {
     // Skip auth check for help/docs routes
@@ -19,9 +25,17 @@ export function LayoutWrapper({ children }: { children: React.ReactNode }) {
         const response = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/api/user`, {
           credentials: 'include',
         });
-        setIsAuthenticated(response.ok);
+        if (response.ok) {
+          const data = await response.json();
+          setAuthState({
+            isAuthenticated: true,
+            onboardingStep: data.onboarding_step || null,
+          });
+        } else {
+          setAuthState({ isAuthenticated: false, onboardingStep: null });
+        }
       } catch {
-        setIsAuthenticated(false);
+        setAuthState({ isAuthenticated: false, onboardingStep: null });
       }
     };
 
@@ -34,12 +48,17 @@ export function LayoutWrapper({ children }: { children: React.ReactNode }) {
   }
 
   // Don't show anything while checking auth
-  if (isAuthenticated === null) {
+  if (authState === null) {
     return null;
   }
 
-  // If authenticated, show AppLayout (which handles all pages internally)
-  if (isAuthenticated) {
+  // If authenticated
+  if (authState.isAuthenticated) {
+    // Check if onboarding is incomplete
+    if (authState.onboardingStep && authState.onboardingStep !== 'completed') {
+      return <OnboardingController />;
+    }
+    // Onboarding complete, show AppLayout
     return <AppLayout />;
   }
 

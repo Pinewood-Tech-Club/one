@@ -38,5 +38,26 @@ export default defineSchema({
   })
     .index("by_user", ["userId"])
     .index("by_user_and_due", ["userId", "dueDate"]),
+
+  // User onboarding state - stored in Convex for reactive frontend updates
+  users: defineTable({
+    userId: v.string(), // Backend user.id as string
+    onboardingStep: v.union(
+      v.literal("welcome"),
+      v.literal("connect_lms"),
+      v.literal("smart_consent"),
+      v.literal("completed")
+    ),
+    smartFeaturesConsent: v.optional(
+      v.object({
+        enabled: v.boolean(),
+        timestamp: v.number(),
+        version: v.string(),
+      })
+    ),
+    schoologyConnected: v.boolean(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_user", ["userId"]),
 });
 
