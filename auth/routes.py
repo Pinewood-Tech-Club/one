@@ -1,11 +1,15 @@
 """
 Authentication routes
 """
+import logging
 from flask import Blueprint, redirect, request, session, jsonify
 from config import Config
 from auth.google import get_google_auth_url, exchange_code_for_token, get_user_info
 from db.users import get_or_create_user
 from db.sessions import create_session, delete_session
+from onboarding import get_or_create_user as convex_get_or_create_user
+
+logger = logging.getLogger(__name__)
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/auth')
 
@@ -20,8 +24,8 @@ def auth_google():
 @auth_bp.route("/google/callback")
 def auth_google_callback():
     """Handle Google OAuth callback"""
-    print("=== GOOGLE CALLBACK HIT ===")
-    print(f"Request args: {request.args}")
+    logger.debug("Google OAuth callback hit")
+    logger.debug(f"Request args: {request.args}")
     try:
         code = request.args.get("code")
         if not code:
@@ -55,6 +59,12 @@ def auth_google_callback():
         # Get or create user account
         user_id = get_or_create_user(google_user_id, email, name)
 
+        # Create user record in Convex for onboarding state (non-blocking on failure)
+        try:
+            convex_get_or_create_user(Config.CONVEX_URL, str(user_id))
+        except Exception as e:
+            logger.warning(f"Failed to create Convex user record: {e}")
+
         # Create session
         session_id = create_session(user_id)
         session["session_id"] = session_id
@@ -63,7 +73,7 @@ def auth_google_callback():
         return redirect(f"{Config.FRONTEND_URL}?success=true")
 
     except Exception as e:
-        print(f"Authentication error: {str(e)}")
+        logger.error(f"Authentication error: {e}")
         return redirect(f"{Config.FRONTEND_URL}?error=unexpected")
 
 

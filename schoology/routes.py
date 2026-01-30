@@ -12,6 +12,7 @@ from db.tokens import (
     delete_schoology_tokens
 )
 from db.encryption import decrypt_token
+from onboarding import update_schoology_connected, update_onboarding_step
 
 # Blueprint for /oauth/schoology/* routes
 oauth_bp = Blueprint('schoology_oauth', __name__, url_prefix='/oauth/schoology')
@@ -87,11 +88,17 @@ def schoology_oauth_callback():
     This endpoint is called by Schoology after user authorization.
     """
     try:
+        # Check for error parameter (user cancelled or denied access)
+        error = request.args.get('error')
+        if error:
+            print(f"[INFO] Schoology OAuth cancelled/denied: {error}")
+            return redirect(f"{Config.FRONTEND_URL}/onboarding?error=access_denied")
+
         # Get oauth_token from query params (sent by Schoology)
         oauth_token = request.args.get('oauth_token')
 
         if not oauth_token:
-            return redirect(f"{Config.FRONTEND_URL}?error=schoology_callback_failed")
+            return redirect(f"{Config.FRONTEND_URL}/onboarding?error=schoology_callback_failed")
 
         # Find which user this request token belongs to
         import sqlite3
@@ -116,7 +123,7 @@ def schoology_oauth_callback():
 
         if not user_id or not request_token_secret:
             print(f"[ERROR] Could not find user for oauth_token: {oauth_token}")
-            return redirect(f"{Config.FRONTEND_URL}?error=schoology_callback_failed")
+            return redirect(f"{Config.FRONTEND_URL}/onboarding?error=schoology_callback_failed")
 
         # Complete OAuth flow using the package
         access_token, access_token_secret = complete_oauth(
@@ -128,21 +135,28 @@ def schoology_oauth_callback():
         )
 
         if not access_token or not access_token_secret:
-            return redirect(f"{Config.FRONTEND_URL}?error=schoology_callback_failed")
+            return redirect(f"{Config.FRONTEND_URL}/onboarding?error=schoology_callback_failed")
 
         # Save access tokens and clear request tokens
         save_schoology_access_tokens(user_id, access_token, access_token_secret)
 
         print(f"✅ Schoology OAuth successful for user_id: {user_id}")
 
-        # Redirect to frontend with success parameter
-        return redirect(f"{Config.FRONTEND_URL}?schoology_connected=true")
+        # Update Convex: mark Schoology as connected and advance onboarding
+        try:
+            update_schoology_connected(Config.CONVEX_URL, str(user_id), True)
+            update_onboarding_step(Config.CONVEX_URL, str(user_id), "smart_consent")
+        except Exception as e:
+            print(f"[WARNING] Failed to update Convex onboarding state: {e}")
+
+        # Redirect to onboarding page (frontend will show smart_consent step)
+        return redirect(f"{Config.FRONTEND_URL}/onboarding?schoology_connected=true")
 
     except Exception as e:
         print(f"[ERROR] Schoology OAuth callback error: {e}")
         import traceback
         traceback.print_exc()
-        return redirect(f"{Config.FRONTEND_URL}?error=schoology_callback_failed")
+        return redirect(f"{Config.FRONTEND_URL}/onboarding?error=schoology_callback_failed")
 
 
 # API routes
@@ -268,6 +282,12 @@ def schoology_disconnect(user):
 
         # Delete tokens
         delete_schoology_tokens(user["id"])
+
+        # Update Convex: mark Schoology as disconnected
+        try:
+            update_schoology_connected(Config.CONVEX_URL, str(user["id"]), False)
+        except Exception as e:
+            print(f"[WARNING] Failed to update Convex: {e}")
 
         return jsonify({"message": "Schoology account disconnected successfully"})
 
