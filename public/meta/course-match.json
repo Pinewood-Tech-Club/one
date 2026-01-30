@@ -1,0 +1,73 @@
+{
+    "subjects": [
+        {
+            "subject": "Math",
+            "keywords": [
+                {
+                    "keyword": "Algebra",
+                    "weight": 1
+                },
+                {
+                    "keyword": "Geometry",
+                    "weight": 1
+                },
+                {
+                    "keyword": "Calc",
+                    "weight": 1
+                },
+                {
+                    "keyword": "Stat",
+                    "weight": 1
+                },
+                {
+                    "keyword": "Trig",
+                    "weight": 1
+                }
+            ],
+            "icon": "/icons/courses/math.svg",
+            "color": "#fa0a3a"
+        },
+        {
+            "subject": "Science",
+            "keywords": [
+                {
+                    "keyword": "Physics",
+                    "weight": 1
+                },
+                {
+                    "keyword": "Chemistry",
+                    "weight": 1
+                },
+                {
+                    "keyword": "Biology",
+                    "weight": 1
+                },
+                {
+                    "keyword": "Science",
+                    "weight": 1
+                }
+            ],
+            "icon": "/icons/courses/science.svg",
+            "color": "#a319ff"
+        },
+        {
+            "subject": "Computer Science",
+            "keywords": [
+                {
+                    "keyword": "Computer",
+                    "weight": 5
+                },
+                {
+                    "keyword": "Mobile App",
+                    "weight": 2
+                }
+            ],
+            "icon": "/icons/courses/cs.svg",
+            "color": "#00a3ff"
+        }
+    ],
+    "catchAll": {
+        "icon": "/icons/courses/generic.svg",
+        "color": "#435c40"
+    }
+}

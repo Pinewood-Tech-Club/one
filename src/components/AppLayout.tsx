@@ -100,6 +100,32 @@ function AppLayoutInner() {
     fetchUser();
   }, [setLoading]);
 
+  // Auto-refresh Schoology data on page load
+  useEffect(() => {
+    const refreshSchoologyData = async () => {
+      setLoading('schoology-refresh', true);
+      try {
+        const response = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/api/schoology/refresh`, {
+          method: 'POST',
+          credentials: 'include',
+        });
+        if (response.ok) {
+          const data = await response.json();
+          console.log('[Schoology] Auto-refresh completed:', data);
+        } else {
+          // Not connected to Schoology or other error - silently ignore
+          console.log('[Schoology] Auto-refresh skipped - not connected');
+        }
+      } catch (error) {
+        console.error('[Schoology] Auto-refresh error:', error);
+      } finally {
+        setLoading('schoology-refresh', false);
+      }
+    };
+
+    refreshSchoologyData();
+  }, [setLoading]);
+
   // Update indicator position when hover or active page changes
   useEffect(() => {
     const targetPage = hoveredPage ?? currentPage;

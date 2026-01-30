@@ -1,36 +1,99 @@
 'use client';
 
+import { useEffect } from 'react';
+import { useQuery } from 'convex/react';
+import { api } from '../../../convex/_generated/api';
+import { useLoading } from '@/context/LoadingContext';
 import { Carosuel, CarosuelItem } from "./Carosuel";
 import { AssignmentCard } from "./AssignmentCard";
 
-export function UpcomingAssignmentsCarosuel() {
-    return (
-        <div className="bg-green-800">
-            <Carosuel className="flex gap-4 overflow-x-auto p-4 items-stretch">
-                <CarosuelItem className="flex">
-                    <AssignmentCard
-                        id={123}
-                        name="HW 11.3"
-                        due={Math.floor(Date.now() / 1000) + 86400 * 3}
-                        course="Chemistry Honors"
-                        section="C Period"
-                        description="Watch the 11.3 EdPuzzle where we left off in class In the textbook do #27, 28, 32"
-                        schoologyLink="https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-                    />
-                </CarosuelItem>
+// Transform Schoology date string to Unix timestamp (seconds)
+function parseSchoologyDate(dateStr: string): number {
+  if (!dateStr) return 0;
+  // Format: "YYYY-MM-DD HH:MM:SS" or "YYYY-MM-DD"
+  const date = new Date(dateStr.replace(' ', 'T'));
+  return Math.floor(date.getTime() / 1000);
+}
 
-                <CarosuelItem className="flex">
-                    <AssignmentCard
-                        id={123}
-                        name="SAP 2.0—Expository Section of Outline"
-                        due={Math.floor(Date.now() / 1000) + 86400}
-                        course="Writing 10"
-                        section="D Period"
-                        description="Complete this in the outline document I created for you"
-                        schoologyLink="https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-                    />
-                </CarosuelItem>
-            </Carosuel>
-        </div>
+// Construct Schoology assignment link
+function buildSchoologyLink(assignmentId: string | number): string {
+  return `https://schoology.pinewood.edu/assignment/${assignmentId}/info`;
+}
+
+// Transform Convex data to AssignmentCard props
+interface AssignmentCardData {
+  id: number;
+  name: string;
+  due: number;
+  course: string;
+  section: string;
+  description: string;
+  schoologyLink: string;
+}
+
+function transformAssignment(item: any): AssignmentCardData {
+  return {
+    id: Number(item.id || 0),
+    name: item.title || 'Untitled Assignment',
+    due: parseSchoologyDate(item.due || ''),
+    course: item.course_title || 'Unknown Course',
+    section: item.section_title || '',
+    description: item.description || '',
+    schoologyLink: buildSchoologyLink(item.id),
+  };
+}
+
+export function UpcomingAssignmentsCarosuel() {
+  const { setLoading } = useLoading();
+  const upcomingAssignments = useQuery(api.schoologyCache.getUpcoming);
+
+  // Manage loading state based on query status
+  useEffect(() => {
+    // undefined = loading, null/array = loaded
+    const isLoading = upcomingAssignments === undefined;
+    setLoading('upcoming-data', isLoading);
+
+    return () => {
+      // Cleanup: remove loading state when component unmounts
+      setLoading('upcoming-data', false);
+    };
+  }, [upcomingAssignments, setLoading]);
+
+  // Still loading
+  if (upcomingAssignments === undefined) {
+    return null; // Loading screen handles this
+  }
+
+  // Empty state
+  if (!upcomingAssignments || upcomingAssignments.length === 0) {
+    return (
+      <div className="bg-gray-100 dark:bg-gray-800 p-8 rounded-lg text-center">
+        <p className="text-white text-lg font-semibold">No upcoming assignments!</p>
+        <p className="text-green-200 text-sm mt-2">Enjoy your free time.</p>
+      </div>
     );
+  }
+
+  // Transform and render assignments
+  const assignments = upcomingAssignments.map(transformAssignment);
+
+  return (
+    <div className="bg-gray-100 dark:bg-gray-800">
+      <Carosuel className="flex gap-4 overflow-x-auto p-4 items-stretch">
+        {assignments.map((assignment) => (
+          <CarosuelItem key={assignment.id} className="flex">
+            <AssignmentCard
+              id={assignment.id}
+              name={assignment.name}
+              due={assignment.due}
+              course={assignment.course}
+              section={assignment.section}
+              description={assignment.description}
+              schoologyLink={assignment.schoologyLink}
+            />
+          </CarosuelItem>
+        ))}
+      </Carosuel>
+    </div>
+  );
 }

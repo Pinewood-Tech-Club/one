@@ -21,14 +21,21 @@ const DEBUG_DELAY = false;
 const DEBUG_DELAY_MS = 0;
 
 export function LoadingScreen() {
-  const { isLoading } = useLoading();
+  const { isLoading, clearLoading, loadingStates } = useLoading();
   const [isMounted, setIsMounted] = useState(false);
   const [isSafari, setIsSafari] = useState(false);
-  
+
   // Animation States
   const [videoScale, setVideoScale] = useState(1);
   const [holeSize, setHoleSize] = useState<'closed' | 'open'>('closed');
   const [isExiting, setIsExiting] = useState(false);
+
+  const handleSkip = () => {
+    // Clear all loading states immediately
+    Object.keys(loadingStates).forEach((key) => {
+      clearLoading(key);
+    });
+  };
 
   useEffect(() => {
     // Detect Safari
@@ -148,6 +155,15 @@ export function LoadingScreen() {
             <source src="/animations/loading.webm" type="video/webm" />
           </video>
         )}
+      </div>
+      <div className="absolute bottom-4 right-4">
+        <button
+          onClick={handleSkip}
+          className="text-white hover:text-green-200 transition-colors cursor-pointer text-2xl font-bold"
+          aria-label="Skip loading"
+        >
+          {">>"}
+        </button>
       </div>
     </div>
   );

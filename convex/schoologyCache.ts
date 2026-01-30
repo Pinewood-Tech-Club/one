@@ -93,13 +93,21 @@ export const getUpcoming = query({
   handler: async (ctx) => {
     const user = await getOptionalAuthenticatedUser(ctx);
     if (!user) {
+      console.log("[getUpcoming] No authenticated user");
       return [];
     }
+
+    console.log("[getUpcoming] Querying for userId:", user.userId);
 
     const upcoming = await ctx.db
       .query("schoologyUpcoming")
       .withIndex("by_user", (q) => q.eq("userId", user.userId))
       .collect();
+
+    console.log("[getUpcoming] Found", upcoming.length, "upcoming assignments");
+    if (upcoming.length > 0) {
+      console.log("[getUpcoming] First item:", upcoming[0]);
+    }
 
     return upcoming.map(item => ({
       ...item.data, // Spread the full assignment object with course info
@@ -250,6 +258,7 @@ export const updateUpcoming = mutation({
     assignments: v.array(v.any()), // Accept full assignment objects with course info
   },
   handler: async (ctx, args) => {
+    console.log("[updateUpcoming] Called for userId:", args.userId, "with", args.assignments.length, "assignments");
     const timestamp = Date.now();
 
     // Clear existing upcoming assignments for this user
@@ -258,6 +267,7 @@ export const updateUpcoming = mutation({
       .withIndex("by_user", (q) => q.eq("userId", args.userId))
       .collect();
 
+    console.log("[updateUpcoming] Deleting", existing.length, "existing assignments");
     for (const item of existing) {
       await ctx.db.delete(item._id);
     }
@@ -274,6 +284,7 @@ export const updateUpcoming = mutation({
       });
     }
 
+    console.log("[updateUpcoming] Inserted", args.assignments.length, "assignments");
     return { success: true, count: args.assignments.length };
   },
 });
