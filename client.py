@@ -4,6 +4,7 @@ Schoology API client wrapper
 import schoolopy
 import requests_oauthlib
 from datetime import datetime, timedelta
+from urllib.parse import urlparse
 from .convex_sync import sync_courses, sync_assignments, sync_upcoming, clear_cache
 
 
@@ -26,46 +27,71 @@ class SchoologyService:
         assignments = service.get_upcoming_assignments(days=7)
     """
 
-    def __init__(self, user_id: str, access_token: str, access_token_secret: str,
+    def __init__(self, user_id: str, access_token: str | None, access_token_secret: str | None,
                  consumer_key: str, consumer_secret: str, convex_url: str,
-                 schoology_domain: str = "https://app.schoology.com"):
+                 schoology_domain: str = "https://app.schoology.com",
+                 schoology_api_domain: str = "https://api.schoology.com"):
         """
         Initialize Schoology service
 
         Args:
             user_id: User ID string
-            access_token: OAuth access token
-            access_token_secret: OAuth access token secret
+            access_token: OAuth access token (three-legged) or None (two-legged)
+            access_token_secret: OAuth access token secret (three-legged) or None (two-legged)
             consumer_key: Schoology consumer key
             consumer_secret: Schoology consumer secret
             convex_url: Convex deployment URL
             schoology_domain: Schoology domain URL (default: https://app.schoology.com)
+            schoology_api_domain: Schoology API domain (default: https://api.schoology.com)
         """
         self.user_id = user_id
         self.convex_url = convex_url
         self.consumer_key = consumer_key
         self.consumer_secret = consumer_secret
 
+        three_legged = bool(access_token and access_token_secret)
+
         # Create schoolopy auth object
         auth = schoolopy.Auth(
             consumer_key,
             consumer_secret,
-            three_legged=True,
+            three_legged=three_legged,
             domain=schoology_domain,
-            access_token=access_token,
-            access_token_secret=access_token_secret,
+            access_token=access_token if three_legged else None,
+            access_token_secret=access_token_secret if three_legged else None,
         )
 
-        # Recreate the OAuth session with access tokens
-        # This is required for API calls to work properly
+        # Ensure we always sign requests using PLAINTEXT (Schoology's OAuth 1.0 requirement).
+        # For two-legged auth, omit resource owner tokens entirely.
         auth.oauth = requests_oauthlib.OAuth1Session(
             consumer_key,
             client_secret=consumer_secret,
-            resource_owner_key=access_token,
-            resource_owner_secret=access_token_secret,
+            resource_owner_key=access_token if three_legged else None,
+            resource_owner_secret=access_token_secret if three_legged else None,
+            signature_method="PLAINTEXT",
         )
 
-        self.sc = schoolopy.Schoology(auth)
+        api_root = schoology_api_domain.rstrip("/")
+        if api_root.endswith("/v1"):
+            api_host = f"{api_root}/"
+        elif api_root.endswith("/v1/"):
+            api_host = api_root
+        else:
+            api_host = f"{api_root}/v1/"
+
+        api_netloc = urlparse(api_host).netloc
+
+        # schoolopy hardcodes Host: api.schoology.com, which can break when using a custom API domain.
+        def _request_header() -> dict:
+            return {
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                **({"Host": api_netloc} if api_netloc else {}),
+            }
+
+        auth._request_header = _request_header
+
+        self.sc = schoolopy.Schoology(auth, api_host=api_host)
 
     def get_courses(self, sync_to_convex: bool = True) -> list[dict]:
         """
@@ -104,7 +130,7 @@ class SchoologyService:
 
         return assignment_dicts
 
-    def get_upcoming_assignments(self, days: int = 7) -> list[dict]:
+    def get_upcoming_assignments(self, days: int = 365) -> list[dict]:
         """
         Get assignments due within the next N days across all courses
 
@@ -149,6 +175,7 @@ class SchoologyService:
                         # Add course metadata
                         assignment_dict['course_title'] = getattr(section, 'course_title', '')
                         assignment_dict['section_id'] = section.id
+                        assignment_dict['section_title'] = getattr(section, 'section_title', '')
                         upcoming.append(assignment_dict)
 
             except Exception as e:
@@ -183,10 +210,19 @@ class SchoologyService:
                 print(f"[WARNING] Error refreshing assignments for course {course['id']}: {e}")
                 continue
 
+        # Fetch and sync upcoming assignments
+        try:
+            upcoming = self.get_upcoming_assignments()  # Uses default of 365 days
+            upcoming_count = len(upcoming)
+        except Exception as e:
+            print(f"[WARNING] Error refreshing upcoming assignments: {e}")
+            upcoming_count = 0
+
         return {
             "success": True,
             "courses_updated": len(courses),
-            "assignments_updated": total_assignments
+            "assignments_updated": total_assignments,
+            "upcoming_updated": upcoming_count
         }
 
     def disconnect(self):
@@ -202,9 +238,23 @@ class SchoologyService:
         Returns:
             Dictionary with user info
         """
-        user_data = self.sc.get_me()
-        return {
-            "id": user_data.uid,
-            "name": getattr(user_data, 'name_display', ''),
-            "email": getattr(user_data, 'primary_email', '')
-        }
+        try:
+            user_data = self.sc.get_me()
+            return {
+                "id": user_data.uid,
+                "name": getattr(user_data, 'name_display', ''),
+                "email": getattr(user_data, 'primary_email', '')
+            }
+        except Exception:
+            # Two-legged auth may not support /users/me; fall back to /app-user-info then /users/{api_uid}.
+            session = self.sc.get_self_user_info()
+            api_uid = getattr(session, "api_uid", None) or session.get("api_uid")
+            if not api_uid:
+                raise
+
+            user_data = self.sc.get_user(api_uid)
+            return {
+                "id": getattr(user_data, "uid", api_uid),
+                "name": getattr(user_data, 'name_display', ''),
+                "email": getattr(user_data, 'primary_email', '')
+            }
