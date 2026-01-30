@@ -12,11 +12,22 @@ def save_schoology_credentials(user_id, consumer_key, consumer_secret):
     conn = sqlite3.connect(Config.MAIN_DB_PATH)
     cursor = conn.cursor()
     cursor.execute(
-        """INSERT OR REPLACE INTO schoology_tokens
+        """INSERT INTO schoology_tokens
            (user_id, consumer_key, consumer_secret, updated_at)
            VALUES (?, ?, ?, ?)""",
         (user_id, encrypt_token(consumer_key), encrypt_token(consumer_secret), datetime.now().isoformat())
     )
+    row_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return row_id
+
+
+def delete_schoology_tokens_row(row_id: int):
+    """Delete a single schoology_tokens row by id"""
+    conn = sqlite3.connect(Config.MAIN_DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM schoology_tokens WHERE id = ?", (row_id,))
     conn.commit()
     conn.close()
 
@@ -64,6 +75,7 @@ def save_schoology_access_tokens(user_id, access_token, access_token_secret):
         cursor.execute(
             """UPDATE schoology_tokens
                SET access_token = ?, access_token_secret = ?,
+                   consumer_key = NULL, consumer_secret = NULL,
                    request_token = NULL, request_token_secret = NULL,
                    updated_at = ?
                WHERE id = ?""",
@@ -72,8 +84,9 @@ def save_schoology_access_tokens(user_id, access_token, access_token_secret):
     else:
         # Insert new row
         cursor.execute(
-            """INSERT INTO schoology_tokens (user_id, access_token, access_token_secret, updated_at)
-               VALUES (?, ?, ?, ?)""",
+            """INSERT INTO schoology_tokens
+               (user_id, consumer_key, consumer_secret, access_token, access_token_secret, updated_at)
+               VALUES (?, NULL, NULL, ?, ?, ?)""",
             (user_id, encrypt_token(access_token), encrypt_token(access_token_secret), datetime.now().isoformat())
         )
 
@@ -113,4 +126,3 @@ def delete_schoology_tokens(user_id):
     cursor.execute("DELETE FROM schoology_tokens WHERE user_id = ?", (user_id,))
     conn.commit()
     conn.close()
-
