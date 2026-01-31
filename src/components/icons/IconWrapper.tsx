@@ -19,12 +19,17 @@ export function IconWrapper({ src, alt = '', className = '', color }: IconWrappe
         let modifiedSvg = svg;
 
         // If color is provided, replace fill/stroke attributes
-        if (color) {
+        if (color && color !== 'currentColor') {
           const colorValue = color.startsWith('#') ? color : `#${color}`;
           // Replace fill attributes (but not fill="none")
           modifiedSvg = modifiedSvg.replace(/fill="(?!none)[^"]*"/g, `fill="${colorValue}"`);
           // Also replace stroke attributes if present
           modifiedSvg = modifiedSvg.replace(/stroke="(?!none)[^"]*"/g, `stroke="${colorValue}"`);
+        } else if (color === 'currentColor') {
+          // Replace fill attributes (but not fill="none")
+          modifiedSvg = modifiedSvg.replace(/fill="(?!none)[^"]*"/g, `fill="currentColor"`);
+          // Also replace stroke attributes if present
+          modifiedSvg = modifiedSvg.replace(/stroke="(?!none)[^"]*"/g, `stroke="currentColor"`);
         }
 
         // Inject className into the SVG element

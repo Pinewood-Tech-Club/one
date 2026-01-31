@@ -35,9 +35,9 @@ export default function UserPage() {
       <h1 className="text-3xl font-bold">User Profile</h1>
       {user ? (
         <div className="border rounded-lg p-6">
-          <p className="text-xl">Name: {user.name}</p>
-          <p className="text-xl">Email: {user.email}</p>
-          <p className="text-xl">User ID: {user.user_id}</p>
+          <p className="text-xl" data-ph-mask>Name: {user.name}</p>
+          <p className="text-xl" data-ph-mask>Email: {user.email}</p>
+          <p className="text-xl" data-ph-mask>User ID: {user.user_id}</p>
         </div>
       ) : (
         <p className="text-gray-500">Loading...</p>

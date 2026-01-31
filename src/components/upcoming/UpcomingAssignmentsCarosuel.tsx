@@ -78,7 +78,7 @@ export function UpcomingAssignmentsCarosuel() {
   const assignments = upcomingAssignments.map(transformAssignment);
 
   return (
-    <div className="bg-gray-100 dark:bg-gray-800">
+    <div>
       <Carosuel className="flex gap-4 overflow-x-auto p-4 items-stretch">
         {assignments.map((assignment) => (
           <CarosuelItem key={assignment.id} className="flex">

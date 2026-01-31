@@ -12,6 +12,7 @@ import UserPage from '@/app/dashboard/user/page';
 import { LoadingScreen } from '@/components/LoadingScreen';
 // import { useNavbarContrast } from '@/hooks/useNavbarContrast';
 import { useTheme } from 'next-themes';
+import posthog from 'posthog-js';
 
 type Page = 'upcoming' | 'schedule' | 'grades' | 'chat' | 'user';
 
@@ -69,8 +70,14 @@ function AppLayoutInner() {
     setCurrentPage(page);
   }, [pathname]);
 
+  // Track tab switches with PostHog
+  useEffect(() => {
+    posthog.capture('tab_switched', { tab: currentPage });
+  }, [currentPage]);
+
   // Update URL when currentPage changes (without triggering navigation)
   useEffect(() => {
+    updateIndicatorPosition(currentPage);
     const targetPath = pageToPathname(currentPage);
     if (pathname !== targetPath) {
       window.history.pushState(null, '', targetPath);
@@ -127,10 +134,10 @@ function AppLayoutInner() {
   }, [setLoading]);
 
   // Update indicator position when hover or active page changes
-  useEffect(() => {
-    const targetPage = hoveredPage ?? currentPage;
-    updateIndicatorPosition(targetPage);
-  }, [hoveredPage, currentPage, updateIndicatorPosition]);
+  // useEffect(() => {
+  //   const targetPage = hoveredPage ?? currentPage;
+  //   updateIndicatorPosition(targetPage);
+  // }, [hoveredPage, currentPage, updateIndicatorPosition]);
 
   // Handle window resize - recalculate position
   useEffect(() => {
@@ -140,11 +147,11 @@ function AppLayoutInner() {
   }, [hoveredPage, currentPage, updateIndicatorPosition]);
 
   // Handle window blur - reset hover when user switches windows
-  useEffect(() => {
-    const handleBlur = () => setHoveredPage(null);
-    window.addEventListener('blur', handleBlur);
-    return () => window.removeEventListener('blur', handleBlur);
-  }, []);
+  // useEffect(() => {
+  //   const handleBlur = () => setHoveredPage(null);
+  //   window.addEventListener('blur', handleBlur);
+  //   return () => window.removeEventListener('blur', handleBlur);
+  // }, []);
 
   // Handle mouse up globally - reset mouse down state
   useEffect(() => {
@@ -167,7 +174,7 @@ function AppLayoutInner() {
         <div
           data-navbar
           // className="fixed w-full md:w-2/3 p-2 sm:top-4 left-1/2 -translate-x-1/2 max-w-[640px] sm:rounded-xl backdrop-blur-sm bg-white/10 dark:bg-gray-700/30 shadow-[0_4px_12px_rgba(0,0,0,0.1)] z-50"
-          className="fixed w-full md:w-2/3 p-1 sm:top-4 left-1/2 -translate-x-1/2 max-w-[640px] sm:rounded-xl backdrop-blur-sm bg-green-800 z-50"
+          className="fixed w-auto p-1 top-4 left-1/2 -translate-x-1/2 max-w-[640px] rounded-full bg-green-800 z-50"
         >
           <div
             ref={navContainerRef}
@@ -176,14 +183,13 @@ function AppLayoutInner() {
           >
             {/* Sliding indicator */}
             <div
-              className={`absolute ${isMouseDown ? 'bg-green-600' : 'bg-green-700'} rounded-lg pointer-events-none`}
+              className={`absolute bg-green-700 rounded-full pointer-events-none`}
               style={{
                 left: indicatorStyle.left,
                 width: indicatorStyle.width,
                 height: '100%',
                 top: 0,
-                transform: `scale(${isMouseDown ? 0.95 : 1})`,
-                transition: 'left 250ms ease-out, width 250ms ease-out, transform 150ms ease-out, background-color 150ms ease-out',
+                transition: 'left 250ms ease-out, width 250ms ease-out, transform 150ms ease-out',
               }}
             />
             <div className="flex flex-row gap-2 flex-1 flex-none">
@@ -203,7 +209,14 @@ function AppLayoutInner() {
                       setIsMouseDown(true);
                       setCurrentPage(item.page);
                     }}
-                    className="flex items-center justify-center flex-1 p-0 text-[18px] cursor-pointer text-white relative z-10"
+                    className="flex items-center justify-center flex-1 p-0 text-[18px] cursor-pointer text-white relative z-10 hover:bg-green-700/50 rounded-full"
+                    style={{
+                      transition: 'background-color 150ms ease-out',
+                    }}
+                    hover={{
+                      backgroundColor: 'green-700',
+                    }}
+                    data-nav-item={item.page}
                   >
                     <div
                       ref={(el) => {
@@ -216,31 +229,6 @@ function AppLayoutInner() {
                   </button>
                 );
               })}
-            </div>
-            <div>
-              <button
-                onClick={() => setCurrentPage('user')}
-                onMouseEnter={() => {
-                  setHoveredPage('user');
-                  if (isMouseDown) {
-                    setCurrentPage('user');
-                  }
-                }}
-                onMouseDown={() => {
-                  setIsMouseDown(true);
-                  setCurrentPage('user');
-                }}
-                className="flex items-center justify-center flex-1 p-0 text-[18px] cursor-pointer text-white relative z-10"
-              >
-                <div
-                  ref={(el) => {
-                    navItemRefs.current.set('user', el);
-                  }}
-                  className="flex-col justify-center font-['Inter'] p-1"
-                >
-                  <p className="leading-normal truncate">{userName}</p>
-                </div>
-              </button>
             </div>
           </div>
         </div>

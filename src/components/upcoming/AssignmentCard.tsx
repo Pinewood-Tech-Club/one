@@ -3,6 +3,7 @@
 import { IconWrapper } from "@/components/icons/IconWrapper";
 import { formatRelativeDate } from "@/lib/formatRelativeDate";
 import { getCourseMatch } from "@/lib/getCourseMatch";
+import posthog from 'posthog-js';
 
 interface AssignmentCardProps {
   id: number;
@@ -27,6 +28,7 @@ export function AssignmentCard({ id, name, due, course, section, description, sc
         <div className="flex-1 min-w-0">
           <h3
             className="font-bold text-lg"
+            data-ph-mask
             style={{
               color: color,
               display: '-webkit-box',
@@ -39,17 +41,18 @@ export function AssignmentCard({ id, name, due, course, section, description, sc
           >
             {name}
           </h3>
-          <p className="text-sm">Due {time ? (
+          <p className="text-sm" data-ph-mask>Due {time ? (
             <><span className="font-medium">{day}</span> at <span className="font-medium">{time}</span></>
           ) : (
             <span className="font-medium">{day}</span>
           )}</p>
-          <p className="overflow-hidden text-ellipsis whitespace-nowrap text-xs">{course}: {section}</p>
+          <p className="overflow-hidden text-ellipsis whitespace-nowrap text-xs" data-ph-mask>{course}: {section}</p>
         </div>
       </div>
       {description && (
         <p
           className="mt-2 text-xs text-gray-500"
+          data-ph-mask
           style={{
             display: '-webkit-box',
             WebkitLineClamp: 2,
@@ -63,7 +66,13 @@ export function AssignmentCard({ id, name, due, course, section, description, sc
       )}
 
       <div className="flex justify-between mt-auto pt-4">
-        <a href={schoologyLink} target="_blank" rel="noopener noreferrer" className="text-red-600 font-semibold cursor-pointer">
+        <a
+          href={schoologyLink}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-red-600 font-semibold cursor-pointer"
+          onClick={() => posthog.capture('schoology_link_clicked', { assignmentId: id })}
+        >
           <IconWrapper src="/icons/schoology.svg" className="w-6 h-6" color={color} />
         </a>
         <button className="text-white py-0.5 px-1 rounded-sm cursor-pointer" style={{backgroundColor: color}}>View Details</button>
