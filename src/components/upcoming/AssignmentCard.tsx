@@ -20,9 +20,9 @@ export function AssignmentCard({ id, name, due, course, section, description, sc
   const { icon, color } = getCourseMatch(course);
 
   return (
-    <div className="bg-white p-3 rounded-lg w-96 flex flex-col flex-1" style={{ border: `2px solid ${color}` }}>
+    <div className="bg-white p-3 rounded-3xl w-96 flex flex-col flex-1" style={{ border: `2px solid ${color}` }}>
       <div className="flex items-center gap-3">
-        <div className="p-2 rounded-lg" style={{backgroundColor: color}}>
+        <div className="p-2 rounded-xl" style={{backgroundColor: color}}>
           <IconWrapper src={icon} alt={course} color="#fff" />
         </div>
         <div className="flex-1 min-w-0">
@@ -75,7 +75,7 @@ export function AssignmentCard({ id, name, due, course, section, description, sc
         >
           <IconWrapper src="/icons/schoology.svg" className="w-6 h-6" color={color} />
         </a>
-        <button className="text-white py-0.5 px-1 rounded-sm cursor-pointer" style={{backgroundColor: color}}>View Details</button>
+        <button className="text-white py-0.5 px-2 rounded-full cursor-pointer" style={{backgroundColor: color}}>View Details</button>
       </div>
     </div>
   );

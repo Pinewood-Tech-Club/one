@@ -13,8 +13,8 @@ interface LoadingContextType {
 
 const LoadingContext = createContext<LoadingContextType | undefined>(undefined);
 
-export function LoadingProvider({ children }: { children: ReactNode }) {
-  const [loadingStates, setLoadingStates] = useState<LoadingStates>({});
+export function LoadingProvider({ children, initialStates = {} }: { children: ReactNode; initialStates?: LoadingStates }) {
+  const [loadingStates, setLoadingStates] = useState<LoadingStates>(initialStates);
 
   const setLoading = useCallback((key: string, isLoading: boolean) => {
     setLoadingStates((prev) => {

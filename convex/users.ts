@@ -141,6 +141,34 @@ export const updateSchoologyConnected = mutation({
 });
 
 /**
+ * Update user's Schoology profile picture URL
+ * Called by backend after fetching user info from Schoology
+ */
+export const updateProfilePicture = mutation({
+  args: {
+    userId: v.string(),
+    pictureUrl: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .first();
+
+    if (!user) {
+      throw new Error("User not found");
+    }
+
+    await ctx.db.patch(user._id, {
+      profilePictureUrl: args.pictureUrl,
+      updatedAt: Date.now(),
+    });
+
+    return { success: true };
+  },
+});
+
+/**
  * Save smart features consent and complete onboarding
  * Called by backend when user submits consent form
  */

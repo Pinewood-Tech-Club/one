@@ -22,7 +22,7 @@ const DEBUG_DELAY_MS = 0;
 
 export function LoadingScreen() {
   const { isLoading, clearLoading, loadingStates } = useLoading();
-  const [isMounted, setIsMounted] = useState(false);
+  const [isMounted, setIsMounted] = useState(isLoading);
   const [isSafari, setIsSafari] = useState(false);
 
   // Animation States

@@ -2,7 +2,7 @@ import posthog from 'posthog-js';
 
 posthog.init(process.env.NEXT_PUBLIC_POSTHOG_KEY!, {
   api_host: '/skibidi',
-  ui_host: 'https://us.i.posthog.com',
+  ui_host: '/skibidi',
 
   // Keep analytics anonymous - no user identification
   person_profiles: 'identified_only',

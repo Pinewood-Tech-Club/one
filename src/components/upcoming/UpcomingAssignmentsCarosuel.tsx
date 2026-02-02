@@ -66,12 +66,7 @@ export function UpcomingAssignmentsCarosuel() {
 
   // Empty state
   if (!upcomingAssignments || upcomingAssignments.length === 0) {
-    return (
-      <div className="bg-gray-100 dark:bg-gray-800 p-8 rounded-lg text-center">
-        <p className="text-white text-lg font-semibold">No upcoming assignments!</p>
-        <p className="text-green-200 text-sm mt-2">Enjoy your free time.</p>
-      </div>
-    );
+    return;
   }
 
   // Transform and render assignments

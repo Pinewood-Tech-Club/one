@@ -56,6 +56,7 @@ export default defineSchema({
       })
     ),
     schoologyConnected: v.boolean(),
+    profilePictureUrl: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_user", ["userId"]),

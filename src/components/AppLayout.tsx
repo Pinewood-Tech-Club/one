@@ -12,6 +12,8 @@ import UserPage from '@/app/dashboard/user/page';
 import { LoadingScreen } from '@/components/LoadingScreen';
 // import { useNavbarContrast } from '@/hooks/useNavbarContrast';
 import { useTheme } from 'next-themes';
+import { useQuery } from 'convex/react';
+import { api } from '../../convex/_generated/api';
 import posthog from 'posthog-js';
 
 type Page = 'upcoming' | 'schedule' | 'grades' | 'chat' | 'user';
@@ -38,6 +40,7 @@ function AppLayoutInner() {
   const [userId, setUserId] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState<Page>(() => pathnameToPage(pathname));
   const { setLoading } = useLoading();
+  const convexUser = useQuery(api.users.getUser);
   // const isOverDark = useNavbarContrast({ trigger: currentPage });
   // for performance reasons, just check if dark mode is enabled
   // const isOverDark = useTheme().theme === 'dark';
@@ -47,7 +50,6 @@ function AppLayoutInner() {
   const navItemRefs = useRef<Map<Page, HTMLDivElement | null>>(new Map());
   const [indicatorStyle, setIndicatorStyle] = useState({ left: 0, width: 0 });
   const [hoveredPage, setHoveredPage] = useState<Page | null>(null);
-  const [isMouseDown, setIsMouseDown] = useState(false);
 
   // Update indicator position based on target page
   const updateIndicatorPosition = useCallback((targetPage: Page) => {
@@ -153,13 +155,6 @@ function AppLayoutInner() {
   //   return () => window.removeEventListener('blur', handleBlur);
   // }, []);
 
-  // Handle mouse up globally - reset mouse down state
-  useEffect(() => {
-    const handleMouseUp = () => setIsMouseDown(false);
-    window.addEventListener('mouseup', handleMouseUp);
-    return () => window.removeEventListener('mouseup', handleMouseUp);
-  }, []);
-
   const navItems: Array<{ name: string; icon: string; page: Page }> = [
     { name: 'Upcoming', icon: 'upcoming', page: 'upcoming' }, // icon: @/public/icons/upcoming.svg
     { name: 'Schedule', icon: 'schedule', page: 'schedule' },
@@ -199,22 +194,10 @@ function AppLayoutInner() {
                   <button
                     key={item.page}
                     onClick={() => setCurrentPage(item.page)}
-                    onMouseEnter={() => {
-                      setHoveredPage(item.page);
-                      if (isMouseDown) {
-                        setCurrentPage(item.page);
-                      }
-                    }}
-                    onMouseDown={() => {
-                      setIsMouseDown(true);
-                      setCurrentPage(item.page);
-                    }}
+                    onMouseEnter={() => setHoveredPage(item.page)}
                     className="flex items-center justify-center flex-1 p-0 text-[18px] cursor-pointer text-white relative z-10 hover:bg-green-700/50 rounded-full"
                     style={{
                       transition: 'background-color 150ms ease-out',
-                    }}
-                    hover={{
-                      backgroundColor: 'green-700',
                     }}
                     data-nav-item={item.page}
                   >
@@ -230,6 +213,26 @@ function AppLayoutInner() {
                 );
               })}
             </div>
+            {/* User button */}
+            <button
+              key="user"
+              onClick={() => setCurrentPage('user')}
+              onMouseEnter={() => setHoveredPage('user')}
+              className="flex items-center justify-center flex-1 p-0 text-[18px] cursor-pointer text-white relative z-10 hover:bg-green-700/50 rounded-full ml-8"
+              style={{
+                transition: 'background-color 150ms ease-out',
+              }}
+              data-nav-item="user"
+            >
+              <div
+                ref={(el) => {
+                  navItemRefs.current.set('user', el);
+                }}
+                className="flex-col justify-center font-['Inter'] p-1"
+              >
+                <img src={convexUser?.profilePictureUrl || "/banner-photos/afternoon/001.webp"} alt="User" className="w-8 h-8 object-cover object-center rounded-full" />
+              </div>
+            </button>
           </div>
         </div>
         <div className="gap-0 p-0 w-screen">
@@ -259,7 +262,7 @@ function AppLayoutInner() {
 
 export function AppLayout() {
   return (
-    <LoadingProvider>
+    <LoadingProvider initialStates={{ 'user-fetch': true, 'schoology-refresh': true }}>
       <AppLayoutInner />
       <LoadingScreen />
     </LoadingProvider>
