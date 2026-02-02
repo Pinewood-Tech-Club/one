@@ -15,6 +15,7 @@ from db.tokens import (
 )
 from db.encryption import decrypt_token
 from onboarding import update_schoology_connected, update_onboarding_step
+from schoology_service.convex_sync import sync_profile_picture
 import threading
 
 # Blueprint for /oauth/schoology/* routes
@@ -111,6 +112,12 @@ def schoology_developer_override(user):
             update_onboarding_step(Config.CONVEX_URL, str(user["id"]), "smart_consent")
         except Exception as e:
             print(f"[WARNING] Failed to update Convex onboarding state: {e}")
+
+        try:
+            if schoology_user.get("picture_url"):
+                sync_profile_picture(Config.CONVEX_URL, str(user["id"]), schoology_user["picture_url"])
+        except Exception as e:
+            print(f"[WARNING] Failed to sync profile picture: {e}")
 
         return jsonify({"success": True, "schoology_user": schoology_user})
 
@@ -222,6 +229,16 @@ def schoology_oauth_callback():
             update_onboarding_step(Config.CONVEX_URL, str(user_id), "smart_consent")
         except Exception as e:
             print(f"[WARNING] Failed to update Convex onboarding state: {e}")
+
+        # Fetch and cache profile picture
+        try:
+            service = _create_service(user_id)
+            if service:
+                schoology_user = service.get_user_info()
+                if schoology_user.get("picture_url"):
+                    sync_profile_picture(Config.CONVEX_URL, str(user_id), schoology_user["picture_url"])
+        except Exception as e:
+            print(f"[WARNING] Failed to sync profile picture: {e}")
 
         # Redirect to onboarding page (frontend will show smart_consent step)
         return redirect(f"{Config.FRONTEND_URL}/onboarding?schoology_connected=true")
