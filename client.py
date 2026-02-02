@@ -5,7 +5,7 @@ import schoolopy
 import requests_oauthlib
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
-from .convex_sync import sync_courses, sync_assignments, sync_upcoming, clear_cache
+from .convex_sync import sync_courses, sync_assignments, sync_upcoming, sync_profile_picture, clear_cache
 
 
 class SchoologyService:
@@ -218,6 +218,14 @@ class SchoologyService:
             print(f"[WARNING] Error refreshing upcoming assignments: {e}")
             upcoming_count = 0
 
+        # Refresh profile picture (lightweight /users/me call)
+        try:
+            user_info = self.get_user_info()
+            if user_info.get("picture_url"):
+                sync_profile_picture(self.convex_url, self.user_id, user_info["picture_url"])
+        except Exception as e:
+            print(f"[WARNING] Error refreshing profile picture: {e}")
+
         return {
             "success": True,
             "courses_updated": len(courses),
@@ -243,7 +251,8 @@ class SchoologyService:
             return {
                 "id": user_data.uid,
                 "name": getattr(user_data, 'name_display', ''),
-                "email": getattr(user_data, 'primary_email', '')
+                "email": getattr(user_data, 'primary_email', ''),
+                "picture_url": getattr(user_data, 'picture_url', None),
             }
         except Exception:
             # Two-legged auth may not support /users/me; fall back to /app-user-info then /users/{api_uid}.
@@ -256,5 +265,6 @@ class SchoologyService:
             return {
                 "id": getattr(user_data, "uid", api_uid),
                 "name": getattr(user_data, 'name_display', ''),
-                "email": getattr(user_data, 'primary_email', '')
+                "email": getattr(user_data, 'primary_email', ''),
+                "picture_url": getattr(user_data, 'picture_url', None),
             }

@@ -68,6 +68,25 @@ def sync_upcoming(convex_url: str, user_id: str, assignments: list[dict]):
     return result
 
 
+def sync_profile_picture(convex_url: str, user_id: str, picture_url: str):
+    """
+    Update user's profile picture URL in Convex
+
+    Args:
+        convex_url: Convex deployment URL
+        user_id: User ID (string)
+        picture_url: Schoology profile picture URL
+    """
+    client = _get_client(convex_url)
+
+    result = client.mutation("users:updateProfilePicture", {
+        "userId": user_id,
+        "pictureUrl": picture_url,
+    })
+
+    return result
+
+
 def clear_cache(convex_url: str, user_id: str):
     """
     Clear all cached Schoology data for a user
