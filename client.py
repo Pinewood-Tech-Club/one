@@ -3,7 +3,7 @@ Schoology API client wrapper
 """
 import schoolopy
 import requests_oauthlib
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 from .convex_sync import sync_courses, sync_assignments, sync_upcoming, sync_profile_picture, clear_cache
 
@@ -130,6 +130,50 @@ class SchoologyService:
 
         return assignment_dicts
 
+    @staticmethod
+    def _parse_due_datetime(due_raw) -> datetime | None:
+        """
+        Parse Schoology due date values into UTC-aware datetimes.
+        Supports common formats: YYYY-MM-DD HH:MM:SS, YYYY-MM-DD, and ISO 8601.
+        """
+        if due_raw is None:
+            return None
+
+        # Some APIs return epoch timestamps.
+        if isinstance(due_raw, (int, float)):
+            try:
+                return datetime.fromtimestamp(float(due_raw), tz=timezone.utc)
+            except Exception:
+                return None
+
+        due_str = str(due_raw).strip()
+        if not due_str:
+            return None
+
+        local_tz = datetime.now().astimezone().tzinfo
+
+        # Try ISO-style parsing first (covers timezone offsets and fractional seconds).
+        iso_candidate = due_str.replace("Z", "+00:00")
+        if " " in iso_candidate and "T" not in iso_candidate:
+            iso_candidate = iso_candidate.replace(" ", "T", 1)
+        try:
+            parsed = datetime.fromisoformat(iso_candidate)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=local_tz)
+            return parsed.astimezone(timezone.utc)
+        except ValueError:
+            pass
+
+        # Fallback to known Schoology legacy formats.
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+            try:
+                parsed = datetime.strptime(due_str, fmt).replace(tzinfo=local_tz)
+                return parsed.astimezone(timezone.utc)
+            except ValueError:
+                continue
+
+        return None
+
     def get_upcoming_assignments(self, days: int = 365) -> list[dict]:
         """
         Get assignments due within the next N days across all courses
@@ -143,9 +187,13 @@ class SchoologyService:
         # Get all sections
         sections = self.sc.get_sections()
 
-        # Calculate cutoff date
-        cutoff = datetime.now() + timedelta(days=days)
-        upcoming = []
+        now_utc = datetime.now(timezone.utc)
+        cutoff_utc = now_utc + timedelta(days=days)
+        upcoming: list[tuple[datetime, dict]] = []
+        total_seen = 0
+        missing_due = 0
+        parse_failed = 0
+        out_of_window = 0
 
         # Fetch assignments for each section
         for section in sections:
@@ -153,42 +201,48 @@ class SchoologyService:
                 assignments = self.sc.get_assignments(section.id)
 
                 for assignment in assignments:
+                    total_seen += 1
                     # Parse due date
                     due_date_str = getattr(assignment, 'due', None)
                     if not due_date_str:
+                        missing_due += 1
                         continue
 
-                    try:
-                        # Schoology date format is typically YYYY-MM-DD HH:MM:SS
-                        due_date = datetime.strptime(due_date_str, "%Y-%m-%d %H:%M:%S")
-                    except ValueError:
-                        # Try alternate format
-                        try:
-                            due_date = datetime.strptime(due_date_str, "%Y-%m-%d")
-                        except ValueError:
-                            # Skip if we can't parse the date
-                            continue
+                    due_date = self._parse_due_datetime(due_date_str)
+                    if not due_date:
+                        parse_failed += 1
+                        continue
 
                     # Check if within range
-                    if datetime.now() <= due_date <= cutoff:
+                    if now_utc <= due_date <= cutoff_utc:
                         assignment_dict = assignment.__dict__.copy()
                         # Add course metadata
                         assignment_dict['course_title'] = getattr(section, 'course_title', '')
                         assignment_dict['section_id'] = section.id
                         assignment_dict['section_title'] = getattr(section, 'section_title', '')
-                        upcoming.append(assignment_dict)
+                        upcoming.append((due_date, assignment_dict))
+                    else:
+                        out_of_window += 1
 
             except Exception as e:
                 print(f"[WARNING] Error fetching assignments for section {section.id}: {e}")
                 continue
 
         # Sort by due date
-        upcoming.sort(key=lambda x: x.get('due', ''))
+        upcoming.sort(key=lambda x: x[0])
+        upcoming_assignments = [assignment for _, assignment in upcoming]
+
+        print(
+            f"[DEBUG] Upcoming filter summary user={self.user_id} total={total_seen} "
+            f"included={len(upcoming_assignments)} missing_due={missing_due} "
+            f"parse_failed={parse_failed} out_of_window={out_of_window} "
+            f"window_start={now_utc.isoformat()} window_end={cutoff_utc.isoformat()}"
+        )
 
         # Sync to Convex
-        sync_upcoming(self.convex_url, self.user_id, upcoming)
+        sync_upcoming(self.convex_url, self.user_id, upcoming_assignments)
 
-        return upcoming
+        return upcoming_assignments
 
     def refresh_all(self) -> dict:
         """
