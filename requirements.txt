@@ -4,6 +4,7 @@ charset-normalizer==3.4.4
 click==8.3.0
 cryptography==46.0.3
 Flask==3.1.2
+Flask-Limiter==4.1.1
 flask-cors==6.0.1
 idna==3.11
 itsdangerous==2.2.0

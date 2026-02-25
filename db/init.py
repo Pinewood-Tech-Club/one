@@ -75,6 +75,110 @@ def init_main_db():
     """
     )
 
+    init_mobile_db(cursor)
+
     conn.commit()
     conn.close()
 
+
+def init_mobile_db(cursor):
+    """Initialize mobile auth/session/device tables in main.db."""
+    cursor.execute(
+        """
+    CREATE TABLE IF NOT EXISTS mobile_refresh_tokens (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        device_id TEXT NOT NULL,
+        issued_at TIMESTAMP NOT NULL,
+        expires_at TIMESTAMP NOT NULL,
+        revoked_at TIMESTAMP,
+        last_used_at TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+    )
+    """
+    )
+
+    cursor.execute(
+        """
+    CREATE TABLE IF NOT EXISTS mobile_auth_codes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code_hash TEXT NOT NULL UNIQUE,
+        user_id INTEGER NOT NULL,
+        expires_at TIMESTAMP NOT NULL,
+        consumed_at TIMESTAMP,
+        provider TEXT NOT NULL,
+        redirect_uri TEXT NOT NULL,
+        state_nonce TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+    )
+    """
+    )
+
+    cursor.execute(
+        """
+    CREATE TABLE IF NOT EXISTS mobile_devices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        device_id TEXT NOT NULL,
+        platform TEXT NOT NULL,
+        app_version TEXT NOT NULL,
+        push_token TEXT,
+        push_env TEXT,
+        locale TEXT,
+        timezone TEXT,
+        created_at TIMESTAMP NOT NULL,
+        updated_at TIMESTAMP NOT NULL,
+        last_seen_at TIMESTAMP NOT NULL,
+        revoked_at TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+        UNIQUE (user_id, device_id)
+    )
+    """
+    )
+
+    cursor.execute(
+        """
+    CREATE TABLE IF NOT EXISTS mobile_web_session_tickets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        ticket_hash TEXT NOT NULL UNIQUE,
+        expires_at TIMESTAMP NOT NULL,
+        consumed_at TIMESTAMP,
+        device_id TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+    )
+    """
+    )
+
+    # Indexes
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_mobile_refresh_user_revoked_exp "
+        "ON mobile_refresh_tokens (user_id, revoked_at, expires_at)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_mobile_refresh_device_revoked "
+        "ON mobile_refresh_tokens (device_id, revoked_at)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_mobile_codes_exp "
+        "ON mobile_auth_codes (expires_at)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_mobile_codes_user_consumed "
+        "ON mobile_auth_codes (user_id, consumed_at)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_mobile_devices_device ON mobile_devices (device_id)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_mobile_devices_user_revoked "
+        "ON mobile_devices (user_id, revoked_at)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_mobile_tickets_exp ON mobile_web_session_tickets (expires_at)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_mobile_tickets_user_consumed "
+        "ON mobile_web_session_tickets (user_id, consumed_at)"
+    )
