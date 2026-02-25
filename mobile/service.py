@@ -22,7 +22,8 @@ from onboarding import get_or_create_user as convex_get_or_create_user
 
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
-PKCE_ALLOWED_RE = re.compile(r"^[A-Za-z0-9\-._~]{43,128}$")
+PKCE_VERIFIER_RE = re.compile(r"^[A-Za-z0-9\-._~]{43,128}$")
+PKCE_CHALLENGE_RE = re.compile(r"^[A-Za-z0-9_-]{43,128}$")
 DEVICE_ID_RE = re.compile(r"^[A-Za-z0-9._:\-]{1,128}$")
 OPAQUE_TOKEN_RE = re.compile(r"^[A-Za-z0-9\-_=.]{20,512}$")
 
@@ -80,11 +81,11 @@ def validate_device_id(device_id: str) -> bool:
 def validate_pkce_challenge(challenge: str, method: str) -> bool:
     if method != "S256":
         return False
-    return bool(challenge and PKCE_ALLOWED_RE.fullmatch(challenge))
+    return bool(challenge and PKCE_CHALLENGE_RE.fullmatch(challenge))
 
 
 def validate_pkce_verifier(verifier: str) -> bool:
-    return bool(verifier and PKCE_ALLOWED_RE.fullmatch(verifier))
+    return bool(verifier and PKCE_VERIFIER_RE.fullmatch(verifier))
 
 
 def validate_opaque_input(value: str) -> bool:
@@ -170,7 +171,7 @@ def _exchange_google_code_for_token(code: str) -> dict:
     return response.json()
 
 
-def process_google_callback(code: str, state_token: str) -> tuple[str, str | None]:
+def process_google_callback(code: str, state_token: str) -> tuple[str, str, str | None]:
     state_data = parse_mobile_state(state_token)
     redirect_uri = state_data.get("redirect_uri")
     if not redirect_uri or not is_allowed_mobile_redirect_uri(redirect_uri):
@@ -219,7 +220,7 @@ def process_google_callback(code: str, state_token: str) -> tuple[str, str | Non
         ),
     )
 
-    return one_time_code, state_data.get("client_state")
+    return one_time_code, redirect_uri, state_data.get("client_state")
 
 
 def build_mobile_callback_redirect(redirect_uri: str, code: str | None = None, error: str | None = None, state: str | None = None) -> str:

@@ -73,11 +73,13 @@ def mobile_google_callback():
         return _redirect_for_callback_error(state_token, "invalid_request")
 
     try:
-        auth_code, client_state = service.process_google_callback(code=code, state_token=state_token)
-        state_data = service.parse_mobile_state(state_token)
+        auth_code, redirect_uri, client_state = service.process_google_callback(
+            code=code,
+            state_token=state_token,
+        )
         return redirect(
             service.build_mobile_callback_redirect(
-                state_data["redirect_uri"],
+                redirect_uri,
                 code=auth_code,
                 state=client_state,
             )

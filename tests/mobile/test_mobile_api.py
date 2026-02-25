@@ -16,6 +16,16 @@ from mobile import service
 
 class MobileApiTests(unittest.TestCase):
     def setUp(self):
+        self._config_backup = {
+            "MAIN_DB_PATH": Config.MAIN_DB_PATH,
+            "SESSIONS_DB_PATH": Config.SESSIONS_DB_PATH,
+            "BACKEND_URL": Config.BACKEND_URL,
+            "FRONTEND_URL": Config.FRONTEND_URL,
+            "MOBILE_TOKEN_HASH_SECRET": Config.MOBILE_TOKEN_HASH_SECRET,
+            "MOBILE_ALLOWED_REDIRECT_URIS": list(Config.MOBILE_ALLOWED_REDIRECT_URIS),
+            "RATELIMIT_STORAGE_URI": Config.RATELIMIT_STORAGE_URI,
+        }
+
         self._tempdir = tempfile.TemporaryDirectory()
         Config.MAIN_DB_PATH = f"{self._tempdir.name}/main.db"
         Config.SESSIONS_DB_PATH = f"{self._tempdir.name}/sessions.db"
@@ -30,6 +40,8 @@ class MobileApiTests(unittest.TestCase):
         self.client = self.app.test_client()
 
     def tearDown(self):
+        for key, value in self._config_backup.items():
+            setattr(Config, key, value)
         self._tempdir.cleanup()
 
     def _create_user(self, email="student@pinewood.edu", name="Student"):
@@ -215,6 +227,29 @@ class MobileApiTests(unittest.TestCase):
             json={"refresh_token": refresh, "device_id": "device-1"},
         )
         self.assertEqual(refresh_resp.status_code, 401)
+
+    def test_rate_limit_handler_returns_machine_readable_json(self):
+        for _ in range(10):
+            response = self.client.get("/api/mobile/v1/auth/google/start")
+            self.assertEqual(response.status_code, 400)
+
+        limited = self.client.get("/api/mobile/v1/auth/google/start")
+        self.assertEqual(limited.status_code, 429)
+        self.assertEqual(limited.get_json(), {"error": "rate_limited"})
+
+    def test_google_start_rejects_non_base64url_pkce_challenge(self):
+        bad_challenge = ("A" * 42) + "."
+        response = self.client.get(
+            "/api/mobile/v1/auth/google/start",
+            query_string={
+                "redirect_uri": "pinewoodone://auth/callback",
+                "device_id": "device-1",
+                "code_challenge": bad_challenge,
+                "code_challenge_method": "S256",
+            },
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["error"], "invalid_request")
 
 
 if __name__ == "__main__":

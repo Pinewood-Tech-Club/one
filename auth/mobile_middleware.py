@@ -24,20 +24,20 @@ def mobile_auth_required(func):
     def wrapper(*args, **kwargs):
         token = _extract_bearer_token()
         if not token:
-            return jsonify({"error": "Authentication required"}), 401
+            return jsonify({"error": "authentication_required"}), 401
 
         payload = verify_mobile_access_token(token)
         if not payload:
-            return jsonify({"error": "Invalid token"}), 401
+            return jsonify({"error": "invalid_token"}), 401
 
         try:
             user_id = int(payload.get("sub", ""))
         except (TypeError, ValueError):
-            return jsonify({"error": "Invalid token"}), 401
+            return jsonify({"error": "invalid_token"}), 401
 
         user_data = get_user_by_id(user_id)
         if not user_data:
-            return jsonify({"error": "Invalid token"}), 401
+            return jsonify({"error": "invalid_token"}), 401
 
         g.mobile_user = {
             "id": user_data["id"],
