@@ -34,6 +34,43 @@ Behavior:
 - Stores one-time auth code in `mobile_auth_codes`.
 - Redirects to app callback URI with `code` (or `error`).
 
+### `POST /api/mobile/v1/auth/schoology/start`
+Auth: bearer mobile access token.
+
+Body:
+```json
+{
+  "redirect_uri": "pinewoodone://auth/callback",
+  "device_id": "device-id",
+  "code_challenge": "<pkce-s256-challenge>",
+  "code_challenge_method": "S256",
+  "state": "optional-client-state"
+}
+```
+
+Success:
+```json
+{
+  "auth_url": "https://app.schoology.com/oauth/authorize?..."
+}
+```
+
+Behavior:
+- Validates device binding from bearer token.
+- Starts Schoology OAuth and stores an ephemeral mobile OAuth request record.
+- Uses signed `state` + one-time code exchange on callback.
+
+### `GET /api/mobile/v1/auth/schoology/callback`
+Query params from Schoology:
+- `oauth_token`, `state`, optional `error`
+
+Behavior:
+- Validates callback state.
+- Completes Schoology OAuth and stores Schoology access tokens.
+- Updates Convex onboarding state (`schoologyConnected=true`, `onboardingStep=smart_consent`) best effort.
+- Stores one-time auth code in `mobile_auth_codes` with `provider=schoology`.
+- Redirects to app callback URI with `code` (or `error`).
+
 ## Session Exchange and Refresh
 ### `POST /api/mobile/v1/auth/exchange`
 Body:
@@ -64,6 +101,10 @@ Success response:
   }
 }
 ```
+
+Notes:
+- This endpoint exchanges **Google** one-time auth codes only (`provider=google`).
+- Schoology one-time codes must be exchanged at `/api/mobile/v1/auth/schoology/exchange`.
 
 Errors:
 - `400 {"error":"invalid_grant"}`
@@ -100,6 +141,32 @@ Body:
 
 Success:
 - HTTP `204`
+
+### `POST /api/mobile/v1/auth/schoology/exchange`
+Auth: bearer mobile access token.
+
+Body:
+```json
+{
+  "code": "<one-time-code>",
+  "code_verifier": "<pkce_verifier>",
+  "device_id": "<device-id>"
+}
+```
+
+Success:
+```json
+{
+  "success": true,
+  "schoology_connected": true,
+  "onboarding_step": "smart_consent"
+}
+```
+
+Errors:
+- `400 {"error":"invalid_grant"}`
+- `401 {"error":"unauthorized"}`
+- `409 {"error":"device_mismatch"}`
 
 ## User + Convex
 ### `GET /api/mobile/v1/me`

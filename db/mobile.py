@@ -400,3 +400,94 @@ def consume_mobile_web_ticket(ticket_hash: str, now: datetime) -> tuple[str, dic
         raise
     finally:
         conn.close()
+
+
+def insert_mobile_schoology_oauth_request(
+    user_id: int,
+    request_token_hash: str,
+    request_token_secret_encrypted: str,
+    device_id: str,
+    redirect_uri: str,
+    code_challenge: str,
+    code_challenge_method: str,
+    client_state: str | None,
+    expires_at: datetime,
+    created_at: datetime,
+):
+    conn = _connect()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO mobile_schoology_oauth_requests
+        (user_id, request_token_hash, request_token_secret_encrypted, device_id, redirect_uri,
+         code_challenge, code_challenge_method, client_state, expires_at, consumed_at, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+        """,
+        (
+            user_id,
+            request_token_hash,
+            request_token_secret_encrypted,
+            device_id,
+            redirect_uri,
+            code_challenge,
+            code_challenge_method,
+            client_state,
+            to_db_time(expires_at),
+            to_db_time(created_at),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def consume_mobile_schoology_oauth_request(
+    request_token_hash: str,
+    now: datetime,
+) -> tuple[str, dict | None]:
+    conn = _connect()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("BEGIN IMMEDIATE")
+        cursor.execute(
+            """
+            SELECT id, user_id, request_token_secret_encrypted, device_id, redirect_uri,
+                   code_challenge, code_challenge_method, client_state, expires_at, consumed_at
+            FROM mobile_schoology_oauth_requests
+            WHERE request_token_hash = ?
+            """,
+            (request_token_hash,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            conn.commit()
+            return "invalid", None
+
+        row_dict = dict(row)
+        if row_dict["consumed_at"] is not None:
+            conn.commit()
+            return "consumed", row_dict
+
+        expires_at = parse_db_time(row_dict["expires_at"])
+        if not expires_at or expires_at <= now:
+            conn.commit()
+            return "expired", row_dict
+
+        cursor.execute(
+            """
+            UPDATE mobile_schoology_oauth_requests
+            SET consumed_at = ?
+            WHERE id = ? AND consumed_at IS NULL
+            """,
+            (to_db_time(now), row_dict["id"]),
+        )
+        if cursor.rowcount != 1:
+            conn.commit()
+            return "consumed", row_dict
+
+        conn.commit()
+        return "ok", row_dict
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()

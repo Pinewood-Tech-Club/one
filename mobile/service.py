@@ -16,12 +16,24 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from auth.google import get_user_info
 from auth.jwt_utils import create_convex_token, create_mobile_access_token
 from config import Config
+from db.encryption import decrypt_token, encrypt_token
 from db import mobile as mobile_db
+from db.tokens import save_schoology_access_tokens
 from db.users import get_or_create_user, get_user_by_id
-from onboarding import get_or_create_user as convex_get_or_create_user
+from onboarding import (
+    get_or_create_user as convex_get_or_create_user,
+    update_onboarding_step,
+    update_schoology_connected,
+)
+from schoology_service import complete_oauth, start_oauth
 
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_PROVIDER = "google"
+SCHOOLOGY_PROVIDER = "schoology"
+SUPPORTED_AUTH_CODE_PROVIDERS = {GOOGLE_PROVIDER, SCHOOLOGY_PROVIDER}
+STATE_FLOW_GOOGLE = "google"
+STATE_FLOW_SCHOOLOGY = "schoology"
 PKCE_VERIFIER_RE = re.compile(r"^[A-Za-z0-9\-._~]{43,128}$")
 PKCE_CHALLENGE_RE = re.compile(r"^[A-Za-z0-9_-]{43,128}$")
 DEVICE_ID_RE = re.compile(r"^[A-Za-z0-9._:\-]{1,128}$")
@@ -98,14 +110,18 @@ def create_mobile_state(
     code_challenge: str,
     code_challenge_method: str,
     client_state: str | None,
+    flow: str,
+    user_id: int | None = None,
 ) -> str:
     payload = {
+        "flow": flow,
         "nonce": secrets.token_hex(12),
         "redirect_uri": redirect_uri,
         "device_id": device_id,
         "code_challenge": code_challenge,
         "code_challenge_method": code_challenge_method,
         "client_state": client_state,
+        "user_id": user_id,
         "iat": int(now_utc().timestamp()),
     }
     return _state_serializer().dumps(payload)
@@ -121,6 +137,55 @@ def parse_mobile_state(state_token: str) -> dict:
         raise MobileAuthError("invalid_state", 400) from exc
     except BadSignature as exc:
         raise MobileAuthError("invalid_state", 400) from exc
+
+
+def _require_state_flow(state_data: dict, expected_flow: str):
+    if state_data.get("flow") != expected_flow:
+        raise MobileAuthError("invalid_state", 400)
+
+
+def _require_supported_provider(provider: str):
+    if provider not in SUPPORTED_AUTH_CODE_PROVIDERS:
+        raise MobileAuthError("invalid_request", 400)
+
+
+def _build_auth_code_state_nonce(
+    nonce: str | None,
+    device_id: str,
+    code_challenge: str,
+    code_challenge_method: str,
+    client_state: str | None,
+) -> str:
+    return json.dumps(
+        {
+            "nonce": nonce,
+            "device_id": device_id,
+            "code_challenge": code_challenge,
+            "code_challenge_method": code_challenge_method,
+            "client_state": client_state,
+        }
+    )
+
+
+def _issue_mobile_auth_code(
+    user_id: int,
+    provider: str,
+    redirect_uri: str,
+    state_nonce_payload: str,
+) -> str:
+    _require_supported_provider(provider)
+    one_time_code = secrets.token_urlsafe(32)
+    one_time_code_hash = hash_opaque_token(one_time_code)
+    expires_at = now_utc() + timedelta(seconds=Config.MOBILE_AUTH_CODE_TTL_SECONDS)
+    mobile_db.insert_mobile_auth_code(
+        code_hash=one_time_code_hash,
+        user_id=user_id,
+        expires_at=expires_at,
+        provider=provider,
+        redirect_uri=redirect_uri,
+        state_nonce=state_nonce_payload,
+    )
+    return one_time_code
 
 
 def get_mobile_google_start_redirect(
@@ -143,6 +208,7 @@ def get_mobile_google_start_redirect(
         code_challenge=code_challenge,
         code_challenge_method=code_challenge_method,
         client_state=client_state,
+        flow=STATE_FLOW_GOOGLE,
     )
 
     google_query = {
@@ -173,6 +239,7 @@ def _exchange_google_code_for_token(code: str) -> dict:
 
 def process_google_callback(code: str, state_token: str) -> tuple[str, str, str | None]:
     state_data = parse_mobile_state(state_token)
+    _require_state_flow(state_data, STATE_FLOW_GOOGLE)
     redirect_uri = state_data.get("redirect_uri")
     if not redirect_uri or not is_allowed_mobile_redirect_uri(redirect_uri):
         raise MobileAuthError("invalid_state", 400)
@@ -199,24 +266,16 @@ def process_google_callback(code: str, state_token: str) -> tuple[str, str, str 
         # Convex bootstrap is best effort for mobile auth.
         pass
 
-    one_time_code = secrets.token_urlsafe(32)
-    one_time_code_hash = hash_opaque_token(one_time_code)
-    expires_at = now_utc() + timedelta(seconds=Config.MOBILE_AUTH_CODE_TTL_SECONDS)
-
-    mobile_db.insert_mobile_auth_code(
-        code_hash=one_time_code_hash,
+    one_time_code = _issue_mobile_auth_code(
         user_id=user_id,
-        expires_at=expires_at,
-        provider="google",
+        provider=GOOGLE_PROVIDER,
         redirect_uri=redirect_uri,
-        state_nonce=json.dumps(
-            {
-                "nonce": state_data.get("nonce"),
-                "device_id": state_data.get("device_id"),
-                "code_challenge": state_data.get("code_challenge"),
-                "code_challenge_method": state_data.get("code_challenge_method"),
-                "client_state": state_data.get("client_state"),
-            }
+        state_nonce_payload=_build_auth_code_state_nonce(
+            nonce=state_data.get("nonce"),
+            device_id=state_data.get("device_id"),
+            code_challenge=state_data.get("code_challenge"),
+            code_challenge_method=state_data.get("code_challenge_method"),
+            client_state=state_data.get("client_state"),
         ),
     )
 
@@ -247,7 +306,9 @@ def exchange_auth_code(
     app_version: str,
     locale: str | None,
     timezone_value: str | None,
+    expected_provider: str = GOOGLE_PROVIDER,
 ) -> dict:
+    _require_supported_provider(expected_provider)
     if not validate_opaque_input(code) or not validate_pkce_verifier(code_verifier):
         raise MobileAuthError("invalid_grant", 400)
     if not validate_device_id(device_id):
@@ -259,6 +320,8 @@ def exchange_auth_code(
     code_hash = hash_opaque_token(code)
     status, code_row = mobile_db.consume_mobile_auth_code(code_hash, now)
     if status != "ok" or not code_row:
+        raise MobileAuthError("invalid_grant", 400)
+    if code_row.get("provider") != expected_provider:
         raise MobileAuthError("invalid_grant", 400)
 
     state_data = json.loads(code_row["state_nonce"])
@@ -316,6 +379,168 @@ def exchange_auth_code(
             "email": user["email"],
             "name": user["name"],
         },
+    }
+
+
+def get_mobile_schoology_start_url(
+    user_id: int,
+    redirect_uri: str,
+    device_id: str,
+    code_challenge: str,
+    code_challenge_method: str,
+    client_state: str | None,
+) -> str:
+    if not Config.SCHOOLOGY_CONSUMER_KEY or not Config.SCHOOLOGY_CONSUMER_SECRET:
+        raise MobileAuthError("configuration_error", 500)
+    if not is_allowed_mobile_redirect_uri(redirect_uri):
+        raise MobileAuthError("invalid_request", 400)
+    if not validate_device_id(device_id):
+        raise MobileAuthError("invalid_request", 400)
+    if not validate_pkce_challenge(code_challenge, code_challenge_method):
+        raise MobileAuthError("invalid_request", 400)
+
+    state_token = create_mobile_state(
+        redirect_uri=redirect_uri,
+        device_id=device_id,
+        code_challenge=code_challenge,
+        code_challenge_method=code_challenge_method,
+        client_state=client_state,
+        flow=STATE_FLOW_SCHOOLOGY,
+        user_id=user_id,
+    )
+
+    callback_url = _add_query(
+        f"{Config.BACKEND_URL}/api/mobile/v1/auth/schoology/callback",
+        {"state": state_token},
+    )
+
+    auth_url, request_token, request_token_secret = start_oauth(
+        consumer_key=Config.SCHOOLOGY_CONSUMER_KEY,
+        consumer_secret=Config.SCHOOLOGY_CONSUMER_SECRET,
+        callback_url=callback_url,
+        schoology_domain=Config.SCHOOLOGY_DOMAIN,
+    )
+
+    now = now_utc()
+    mobile_db.insert_mobile_schoology_oauth_request(
+        user_id=user_id,
+        request_token_hash=hash_opaque_token(request_token),
+        request_token_secret_encrypted=encrypt_token(request_token_secret),
+        device_id=device_id,
+        redirect_uri=redirect_uri,
+        code_challenge=code_challenge,
+        code_challenge_method=code_challenge_method,
+        client_state=client_state,
+        expires_at=now + timedelta(seconds=Config.MOBILE_SCHOOLOGY_REQUEST_TTL_SECONDS),
+        created_at=now,
+    )
+    return auth_url
+
+
+def process_schoology_callback(oauth_token: str, state_token: str) -> tuple[str, str, str | None]:
+    if not validate_opaque_input(oauth_token):
+        raise MobileAuthError("invalid_request", 400)
+
+    state_data = parse_mobile_state(state_token)
+    _require_state_flow(state_data, STATE_FLOW_SCHOOLOGY)
+
+    redirect_uri = state_data.get("redirect_uri")
+    if not redirect_uri or not is_allowed_mobile_redirect_uri(redirect_uri):
+        raise MobileAuthError("invalid_state", 400)
+
+    state_user_id = state_data.get("user_id")
+    if not isinstance(state_user_id, int):
+        raise MobileAuthError("invalid_state", 400)
+
+    status, oauth_request = mobile_db.consume_mobile_schoology_oauth_request(
+        request_token_hash=hash_opaque_token(oauth_token),
+        now=now_utc(),
+    )
+    if status in {"invalid", "consumed"} or not oauth_request:
+        raise MobileAuthError("invalid_grant", 400)
+    if status == "expired":
+        raise MobileAuthError("invalid_grant", 400)
+    if status != "ok":
+        raise MobileAuthError("invalid_grant", 400)
+
+    if oauth_request.get("user_id") != state_user_id:
+        raise MobileAuthError("invalid_state", 400)
+    if oauth_request.get("redirect_uri") != redirect_uri:
+        raise MobileAuthError("invalid_state", 400)
+    if oauth_request.get("device_id") != state_data.get("device_id"):
+        raise MobileAuthError("invalid_state", 400)
+
+    request_token_secret = decrypt_token(oauth_request.get("request_token_secret_encrypted"))
+    if not request_token_secret:
+        raise MobileAuthError("invalid_grant", 400)
+
+    access_token, access_token_secret = complete_oauth(
+        consumer_key=Config.SCHOOLOGY_CONSUMER_KEY,
+        consumer_secret=Config.SCHOOLOGY_CONSUMER_SECRET,
+        request_token=oauth_token,
+        request_token_secret=request_token_secret,
+        schoology_domain=Config.SCHOOLOGY_DOMAIN,
+    )
+
+    if not access_token or not access_token_secret:
+        raise MobileAuthError("invalid_grant", 400)
+
+    save_schoology_access_tokens(state_user_id, access_token, access_token_secret)
+    try:
+        update_schoology_connected(Config.CONVEX_URL, str(state_user_id), True)
+        update_onboarding_step(Config.CONVEX_URL, str(state_user_id), "smart_consent")
+    except Exception:
+        # OAuth success should not fail if Convex sync is temporarily unavailable.
+        pass
+
+    one_time_code = _issue_mobile_auth_code(
+        user_id=state_user_id,
+        provider=SCHOOLOGY_PROVIDER,
+        redirect_uri=redirect_uri,
+        state_nonce_payload=_build_auth_code_state_nonce(
+            nonce=state_data.get("nonce"),
+            device_id=oauth_request.get("device_id"),
+            code_challenge=oauth_request.get("code_challenge"),
+            code_challenge_method=oauth_request.get("code_challenge_method"),
+            client_state=oauth_request.get("client_state"),
+        ),
+    )
+
+    return one_time_code, redirect_uri, oauth_request.get("client_state")
+
+
+def exchange_schoology_auth_code(
+    code: str,
+    code_verifier: str,
+    device_id: str,
+    authenticated_user_id: int,
+) -> dict:
+    if not validate_opaque_input(code) or not validate_pkce_verifier(code_verifier):
+        raise MobileAuthError("invalid_grant", 400)
+    if not validate_device_id(device_id):
+        raise MobileAuthError("invalid_request", 400)
+
+    code_hash = hash_opaque_token(code)
+    status, code_row = mobile_db.consume_mobile_auth_code(code_hash, now_utc())
+    if status != "ok" or not code_row:
+        raise MobileAuthError("invalid_grant", 400)
+    if code_row.get("provider") != SCHOOLOGY_PROVIDER:
+        raise MobileAuthError("invalid_grant", 400)
+    if code_row.get("user_id") != authenticated_user_id:
+        raise MobileAuthError("unauthorized", 401)
+
+    state_data = json.loads(code_row["state_nonce"])
+    if state_data.get("device_id") != device_id:
+        raise MobileAuthError("device_mismatch", 409)
+    if state_data.get("code_challenge_method") != "S256":
+        raise MobileAuthError("invalid_grant", 400)
+    if _pkce_s256(code_verifier) != state_data.get("code_challenge"):
+        raise MobileAuthError("invalid_grant", 400)
+
+    return {
+        "success": True,
+        "schoology_connected": True,
+        "onboarding_step": "smart_consent",
     }
 
 

@@ -103,6 +103,81 @@ def mobile_auth_exchange():
             app_version=str(data.get("app_version", "")),
             locale=data.get("locale"),
             timezone_value=data.get("timezone"),
+            expected_provider="google",
+        )
+        return jsonify(payload)
+    except service.MobileAuthError as exc:
+        return _json_error(exc.code, exc.status_code)
+
+
+@mobile_bp.route("/auth/schoology/start", methods=["POST"])
+@mobile_auth_required
+@limiter.limit("10 per minute", key_func=_limit_by_mobile_user)
+def mobile_schoology_start(user, token_payload):
+    data = request.get_json(silent=True) or {}
+    device_id = str(data.get("device_id", ""))
+    if device_id != token_payload.get("device_id"):
+        return _json_error("invalid_request", 400)
+
+    try:
+        auth_url = service.get_mobile_schoology_start_url(
+            user_id=user["id"],
+            redirect_uri=str(data.get("redirect_uri", "")),
+            device_id=device_id,
+            code_challenge=str(data.get("code_challenge", "")),
+            code_challenge_method=str(data.get("code_challenge_method", "")),
+            client_state=data.get("state"),
+        )
+        return jsonify({"auth_url": auth_url})
+    except service.MobileAuthError as exc:
+        return _json_error(exc.code, exc.status_code)
+
+
+@mobile_bp.route("/auth/schoology/callback")
+def mobile_schoology_callback():
+    state_token = request.args.get("state")
+    provider_error = request.args.get("error")
+    oauth_token = request.args.get("oauth_token")
+
+    if provider_error:
+        return _redirect_for_callback_error(state_token, provider_error)
+
+    if not state_token or not oauth_token:
+        return _redirect_for_callback_error(state_token, "invalid_request")
+
+    try:
+        auth_code, redirect_uri, client_state = service.process_schoology_callback(
+            oauth_token=oauth_token,
+            state_token=state_token,
+        )
+        return redirect(
+            service.build_mobile_callback_redirect(
+                redirect_uri,
+                code=auth_code,
+                state=client_state,
+            )
+        )
+    except service.MobileAuthError as exc:
+        return _redirect_for_callback_error(state_token, exc.code)
+    except Exception:
+        return _redirect_for_callback_error(state_token, "unexpected")
+
+
+@mobile_bp.route("/auth/schoology/exchange", methods=["POST"])
+@mobile_auth_required
+@limiter.limit("15 per minute", key_func=_limit_by_mobile_user)
+def mobile_schoology_exchange(user, token_payload):
+    data = request.get_json(silent=True) or {}
+    device_id = str(data.get("device_id", ""))
+    if device_id != token_payload.get("device_id"):
+        return _json_error("invalid_request", 400)
+
+    try:
+        payload = service.exchange_schoology_auth_code(
+            code=str(data.get("code", "")),
+            code_verifier=str(data.get("code_verifier", "")),
+            device_id=device_id,
+            authenticated_user_id=user["id"],
         )
         return jsonify(payload)
     except service.MobileAuthError as exc:

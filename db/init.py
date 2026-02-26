@@ -151,6 +151,26 @@ def init_mobile_db(cursor):
     """
     )
 
+    cursor.execute(
+        """
+    CREATE TABLE IF NOT EXISTS mobile_schoology_oauth_requests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        request_token_hash TEXT NOT NULL UNIQUE,
+        request_token_secret_encrypted TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        redirect_uri TEXT NOT NULL,
+        code_challenge TEXT NOT NULL,
+        code_challenge_method TEXT NOT NULL,
+        client_state TEXT,
+        expires_at TIMESTAMP NOT NULL,
+        consumed_at TIMESTAMP,
+        created_at TIMESTAMP NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+    )
+    """
+    )
+
     # Indexes
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_mobile_refresh_user_revoked_exp "
@@ -181,4 +201,12 @@ def init_mobile_db(cursor):
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_mobile_tickets_user_consumed "
         "ON mobile_web_session_tickets (user_id, consumed_at)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_mobile_schoology_req_exp "
+        "ON mobile_schoology_oauth_requests (expires_at)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_mobile_schoology_req_user_consumed "
+        "ON mobile_schoology_oauth_requests (user_id, consumed_at)"
     )
