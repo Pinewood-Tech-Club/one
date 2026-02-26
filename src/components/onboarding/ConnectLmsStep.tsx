@@ -3,10 +3,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { OnboardingSlide } from './OnboardingSlide';
+import { mobileBridge } from '@/lib/mobileBridge';
 
 const BACKGROUND_COLOR = '#2563eb';
 
-export function ConnectLmsStep() {
+type OnboardingMode = 'web' | 'mobile';
+
+interface ConnectLmsStepProps {
+  mode?: OnboardingMode;
+}
+
+export function ConnectLmsStep({ mode = 'web' }: ConnectLmsStepProps) {
   const searchParams = useSearchParams();
   const error = searchParams.get('error');
   const [overrideOpen, setOverrideOpen] = useState(false);
@@ -22,7 +29,13 @@ export function ConnectLmsStep() {
     };
   }, []);
 
-  const handleConnect = () => {
+  const handleConnect = async () => {
+    if (mode === 'mobile') {
+      const bridged = await mobileBridge.startSchoologyOAuth();
+      if (bridged) {
+        return;
+      }
+    }
     window.location.href = `${process.env.NEXT_PUBLIC_BACKEND_URL}/oauth/schoology/start`;
   };
 
@@ -87,7 +100,9 @@ export function ConnectLmsStep() {
         </p>
       )}
       <button
-        onClick={handleConnect}
+        onClick={() => {
+          void handleConnect();
+        }}
         className="px-10 py-4 bg-white text-blue-600 rounded-full font-semibold text-lg shadow-lg hover:shadow-xl hover:scale-105 transition-all duration-200 cursor-pointer"
       >
         Connect Schoology

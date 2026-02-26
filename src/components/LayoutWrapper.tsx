@@ -13,10 +13,12 @@ type AuthState = {
 export function LayoutWrapper({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [authState, setAuthState] = useState<AuthState>(null);
+  const isHelpRoute = pathname.startsWith('/help');
+  const isMobileOnboardingRoute = pathname.startsWith('/mobile/onboarding');
 
   useEffect(() => {
     // Skip auth check for help/docs routes
-    if (pathname.startsWith('/help')) {
+    if (isHelpRoute) {
       return;
     }
 
@@ -40,10 +42,10 @@ export function LayoutWrapper({ children }: { children: React.ReactNode }) {
     };
 
     checkAuth();
-  }, [pathname]);
+  }, [isHelpRoute, pathname]);
 
   // Bypass auth check for help/docs routes
-  if (pathname.startsWith('/help')) {
+  if (isHelpRoute) {
     return <>{children}</>;
   }
 
@@ -54,6 +56,9 @@ export function LayoutWrapper({ children }: { children: React.ReactNode }) {
 
   // If authenticated
   if (authState.isAuthenticated) {
+    if (isMobileOnboardingRoute) {
+      return <>{children}</>;
+    }
     // Check if onboarding is incomplete
     if (authState.onboardingStep && authState.onboardingStep !== 'completed') {
       return <OnboardingController />;

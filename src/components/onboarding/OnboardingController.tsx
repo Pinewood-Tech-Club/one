@@ -6,16 +6,39 @@ import { api } from '../../../convex/_generated/api';
 import { WelcomeStep } from './WelcomeStep';
 import { ConnectLmsStep } from './ConnectLmsStep';
 import { SmartConsentStep } from './SmartConsentStep';
+import { mobileBridge } from '@/lib/mobileBridge';
 
-export function OnboardingController() {
+type OnboardingMode = 'web' | 'mobile';
+
+interface OnboardingControllerProps {
+  mode?: OnboardingMode;
+}
+
+export function OnboardingController({ mode = 'web' }: OnboardingControllerProps) {
   const user = useQuery(api.users.getUser);
 
   // Redirect to dashboard when onboarding completes
   useEffect(() => {
-    if (user?.onboardingStep === 'completed') {
-      window.location.href = '/dashboard';
+    if (user?.onboardingStep !== 'completed') {
+      return;
     }
-  }, [user?.onboardingStep]);
+
+    let cancelled = false;
+    const finalizeOnboarding = async () => {
+      if (mode === 'mobile') {
+        const bridged = await mobileBridge.onboardingComplete();
+        if (bridged || cancelled) {
+          return;
+        }
+      }
+      window.location.href = '/dashboard';
+    };
+
+    void finalizeOnboarding();
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, user?.onboardingStep]);
 
   // Loading state
   if (user === undefined) {
@@ -27,6 +50,26 @@ export function OnboardingController() {
   }
 
   if (user === null) {
+    if (mode === 'mobile') {
+      return (
+        <div className="fixed inset-0 bg-[#0f172a] text-white flex items-center justify-center px-6">
+          <div className="max-w-md text-center space-y-4">
+            <h1 className="text-3xl font-semibold tracking-tight">Session Expired</h1>
+            <p className="text-base opacity-80">
+              This onboarding session is no longer authenticated. Return to the app and restart onboarding.
+            </p>
+            <button
+              onClick={() => {
+                window.location.href = '/';
+              }}
+              className="px-8 py-3 bg-white text-slate-900 rounded-full font-semibold text-base shadow-lg hover:shadow-xl hover:scale-105 transition-all duration-200 cursor-pointer"
+            >
+              Return Home
+            </button>
+          </div>
+        </div>
+      );
+    }
     return null;
   }
 
@@ -34,7 +77,7 @@ export function OnboardingController() {
     case 'welcome':
       return <WelcomeStep />;
     case 'connect_lms':
-      return <ConnectLmsStep />;
+      return <ConnectLmsStep mode={mode} />;
     case 'smart_consent':
       return <SmartConsentStep />;
     case 'completed':

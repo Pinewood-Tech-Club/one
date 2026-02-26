@@ -2,6 +2,6 @@
 
 import { OnboardingController } from '@/components/onboarding/OnboardingController';
 
-export default function OnboardingPage() {
-  return <OnboardingController mode="web" />;
+export default function MobileOnboardingPage() {
+  return <OnboardingController mode="mobile" />;
 }
