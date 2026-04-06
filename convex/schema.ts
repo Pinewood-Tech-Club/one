@@ -7,37 +7,50 @@ export default defineSchema({
     sidebarCollapsed: v.boolean(),
   }).index("by_user", ["userId"]),
 
-  // Schoology cache tables - store full JSON objects for flexibility
+  // Schoology cache tables - normalized to avoid per-user duplication.
   schoologyCourses: defineTable({
-    userId: v.string(),
     courseId: v.string(), // Schoology section ID
     data: v.any(), // Full section object from Schoology API
-    lastUpdated: v.number(), // timestamp
+    lastSyncedAt: v.optional(v.number()), // timestamp (optional for legacy rows)
+  })
+    .index("by_course", ["courseId"]),
+
+  schoologyCourseMemberships: defineTable({
+    userId: v.string(),
+    courseId: v.string(),
+    role: v.optional(v.string()),
+    isActive: v.boolean(),
+    lastSyncedAt: v.number(),
   })
     .index("by_user", ["userId"])
+    .index("by_course", ["courseId"])
     .index("by_user_and_course", ["userId", "courseId"]),
 
   schoologyAssignments: defineTable({
-    userId: v.string(),
     courseId: v.string(), // Which course this assignment belongs to
     assignmentId: v.string(), // Schoology assignment ID
+    dueAtMs: v.optional(v.number()), // Due date normalized to UTC milliseconds
+    dueRaw: v.optional(v.string()), // Original due date string from Schoology
     data: v.any(), // Full assignment object from Schoology API
-    lastUpdated: v.number(), // timestamp
+    lastSyncedAt: v.optional(v.number()), // timestamp (optional for legacy rows)
+  })
+    .index("by_course", ["courseId"])
+    .index("by_course_and_assignment", ["courseId", "assignmentId"])
+    .index("by_course_and_due", ["courseId", "dueAtMs"]),
+
+  schoologyAssignmentUserState: defineTable({
+    userId: v.string(),
+    courseId: v.string(),
+    assignmentId: v.string(), // Schoology assignment ID
+    completed: v.optional(v.boolean()),
+    completionStatus: v.optional(v.string()),
+    grade: v.optional(v.string()),
+    data: v.optional(v.any()),
+    lastSyncedAt: v.number(),
   })
     .index("by_user", ["userId"])
     .index("by_user_and_course", ["userId", "courseId"])
     .index("by_user_and_assignment", ["userId", "assignmentId"]),
-
-  schoologyUpcoming: defineTable({
-    userId: v.string(),
-    assignmentId: v.string(), // Schoology assignment ID
-    data: v.any(), // Full assignment object with course info
-    courseTitle: v.string(), // Course title for filtering
-    dueDate: v.string(), // Due date string for sorting
-    lastUpdated: v.number(), // timestamp
-  })
-    .index("by_user", ["userId"])
-    .index("by_user_and_due", ["userId", "dueDate"]),
 
   // User onboarding state - stored in Convex for reactive frontend updates
   users: defineTable({
@@ -61,4 +74,3 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_user", ["userId"]),
 });
-

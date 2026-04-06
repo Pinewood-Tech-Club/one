@@ -9,13 +9,6 @@ export default function LoginPage() {
 
   useEffect(() => {
     const errorParam = searchParams.get('error');
-    const successParam = searchParams.get('success');
-
-    // If successful, just redirect
-    if (successParam) {
-      router.push('/');
-      return;
-    }
 
     // If there's an error, redirect to home with params
     if (errorParam) {

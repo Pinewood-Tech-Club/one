@@ -16,6 +16,8 @@ interface ConnectLmsStepProps {
 export function ConnectLmsStep({ mode = 'web' }: ConnectLmsStepProps) {
   const searchParams = useSearchParams();
   const error = searchParams.get('error');
+  const allowDeveloperOverride = mode !== 'mobile' && process.env.NODE_ENV !== 'production';
+  const [bridgeError, setBridgeError] = useState<string | null>(null);
   const [overrideOpen, setOverrideOpen] = useState(false);
   const [overrideClientId, setOverrideClientId] = useState('');
   const [overrideClientSecret, setOverrideClientSecret] = useState('');
@@ -30,12 +32,22 @@ export function ConnectLmsStep({ mode = 'web' }: ConnectLmsStepProps) {
   }, []);
 
   const handleConnect = async () => {
+    setBridgeError(null);
+
     if (mode === 'mobile') {
-      const bridged = await mobileBridge.startSchoologyOAuth();
-      if (bridged) {
+      const bridgeResult = await mobileBridge.startSchoologyOAuthDetailed();
+      if (bridgeResult.status === 'invoked') {
+        return;
+      }
+      if (bridgeResult.status === 'error') {
+        setBridgeError(
+          bridgeResult.error || 'Could not start Schoology sign-in from the app. Please try again.'
+        );
         return;
       }
     }
+
+    // Deterministic fallback for non-bridge environments.
     window.location.href = `${process.env.NEXT_PUBLIC_BACKEND_URL}/oauth/schoology/start`;
   };
 
@@ -99,6 +111,11 @@ export function ConnectLmsStep({ mode = 'web' }: ConnectLmsStepProps) {
             : 'Something went wrong. Please try again.'}
         </p>
       )}
+      {bridgeError && (
+        <p className="bg-red-500/20 border border-red-200/40 px-5 py-3 rounded-xl mb-8 text-base">
+          {bridgeError}
+        </p>
+      )}
       <button
         onClick={() => {
           void handleConnect();
@@ -108,20 +125,22 @@ export function ConnectLmsStep({ mode = 'web' }: ConnectLmsStepProps) {
         Connect Schoology
       </button>
 
-      <button
-        type="button"
-        onClick={() => setOverrideOpen(true)}
-        className="fixed bottom-3 right-3 text-xs opacity-25 hover:opacity-40 transition-opacity"
-      >
-        Developer Override
-      </button>
+      {allowDeveloperOverride && (
+        <button
+          type="button"
+          onClick={() => setOverrideOpen(true)}
+          className="fixed bottom-3 right-3 text-xs opacity-5 hover:opacity-10 transition-opacity"
+        >
+          Tech Club Override
+        </button>
+      )}
 
-      {overrideOpen && (
+      {allowDeveloperOverride && overrideOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center px-6">
           <button
             type="button"
             onClick={() => setOverrideOpen(false)}
-            className="absolute inset-0 bg-black/40"
+            className="absolute inset-0"
             aria-label="Close"
           />
           <div className="relative w-full max-w-sm rounded-2xl bg-white text-black shadow-2xl p-5">

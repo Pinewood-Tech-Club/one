@@ -64,17 +64,6 @@
             ],
             "icon": "/icons/courses/cs.svg",
             "color": "#00a3ff"
-        },
-        {
-            "subject": "Literature",
-            "keywords": [
-                {
-                    "keyword": "Literature",
-                    "weight": 1
-                }
-            ],
-            "icon": "/icons/courses/text.book.closed.svg",
-            "color": "#3662e3"
         }
     ],
     "catchAll": {

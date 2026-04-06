@@ -15,6 +15,11 @@ type MobileBridgeV1 = {
 
 type PartialMobileBridgeV1 = Partial<MobileBridgeV1>;
 
+export type BridgeInvokeResult =
+  | { status: 'invoked' }
+  | { status: 'unavailable' }
+  | { status: 'error'; error: string };
+
 function getBridge(): PartialMobileBridgeV1 | null {
   if (typeof window === 'undefined') {
     return null;
@@ -28,41 +33,65 @@ export const mobileBridge = {
   },
 
   async startSchoologyOAuth(): Promise<boolean> {
+    const result = await this.startSchoologyOAuthDetailed();
+    return result.status === 'invoked';
+  },
+
+  async startSchoologyOAuthDetailed(): Promise<BridgeInvokeResult> {
     const bridge = getBridge();
     if (!bridge?.startSchoologyOAuth) {
-      return false;
+      return { status: 'unavailable' };
     }
     try {
       await bridge.startSchoologyOAuth();
-      return true;
-    } catch {
-      return false;
+      return { status: 'invoked' };
+    } catch (error) {
+      return {
+        status: 'error',
+        error: error instanceof Error ? error.message : 'Bridge call failed',
+      };
     }
   },
 
   async openExternalURL(url: string): Promise<boolean> {
+    const result = await this.openExternalURLDetailed(url);
+    return result.status === 'invoked';
+  },
+
+  async openExternalURLDetailed(url: string): Promise<BridgeInvokeResult> {
     const bridge = getBridge();
     if (!bridge?.openExternalURL) {
-      return false;
+      return { status: 'unavailable' };
     }
     try {
       await bridge.openExternalURL(url);
-      return true;
-    } catch {
-      return false;
+      return { status: 'invoked' };
+    } catch (error) {
+      return {
+        status: 'error',
+        error: error instanceof Error ? error.message : 'Bridge call failed',
+      };
     }
   },
 
   async onboardingComplete(): Promise<boolean> {
+    const result = await this.onboardingCompleteDetailed();
+    return result.status === 'invoked';
+  },
+
+  async onboardingCompleteDetailed(): Promise<BridgeInvokeResult> {
     const bridge = getBridge();
     if (!bridge?.onboardingComplete) {
-      return false;
+      return { status: 'unavailable' };
     }
     try {
       await bridge.onboardingComplete();
-      return true;
-    } catch {
-      return false;
+      return { status: 'invoked' };
+    } catch (error) {
+      return {
+        status: 'error',
+        error: error instanceof Error ? error.message : 'Bridge call failed',
+      };
     }
   },
 

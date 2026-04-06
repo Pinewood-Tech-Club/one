@@ -15,10 +15,12 @@ export function LayoutWrapper({ children }: { children: React.ReactNode }) {
   const [authState, setAuthState] = useState<AuthState>(null);
   const isHelpRoute = pathname.startsWith('/help');
   const isMobileOnboardingRoute = pathname.startsWith('/mobile/onboarding');
+  const shouldBypassAuthGate = isHelpRoute || isMobileOnboardingRoute;
 
   useEffect(() => {
-    // Skip auth check for help/docs routes
-    if (isHelpRoute) {
+    // Skip auth check for help/docs and mobile onboarding routes.
+    // Mobile onboarding has its own auth/session handling inside the page.
+    if (shouldBypassAuthGate) {
       return;
     }
 
@@ -42,10 +44,10 @@ export function LayoutWrapper({ children }: { children: React.ReactNode }) {
     };
 
     checkAuth();
-  }, [isHelpRoute, pathname]);
+  }, [pathname, shouldBypassAuthGate]);
 
-  // Bypass auth check for help/docs routes
-  if (isHelpRoute) {
+  // Bypass auth check for help/docs and mobile onboarding routes.
+  if (shouldBypassAuthGate) {
     return <>{children}</>;
   }
 

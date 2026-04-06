@@ -15,6 +15,7 @@ const nextConfig: NextConfig = {
     ];
   },
   skipTrailingSlashRedirect: true,
+  devIndicators: false,
 };
 
 const withMDX = createMDX();
