@@ -171,6 +171,26 @@ def init_mobile_db(cursor):
     """
     )
 
+    cursor.execute(
+        """
+    CREATE TABLE IF NOT EXISTS mobile_notification_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        device_id TEXT,
+        event_type TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TIMESTAMP NOT NULL,
+        available_at TIMESTAMP NOT NULL,
+        processed_at TIMESTAMP,
+        last_error TEXT,
+        FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+        CHECK (event_type IN ('assignment_due_soon', 'grade_posted', 'schoology_sync_failed')),
+        CHECK (status IN ('pending', 'processing', 'processed', 'failed'))
+    )
+    """
+    )
+
     # Indexes
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_mobile_refresh_user_revoked_exp "
@@ -209,4 +229,12 @@ def init_mobile_db(cursor):
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_mobile_schoology_req_user_consumed "
         "ON mobile_schoology_oauth_requests (user_id, consumed_at)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_mobile_notification_status_available "
+        "ON mobile_notification_events (status, available_at)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_mobile_notification_user_created "
+        "ON mobile_notification_events (user_id, created_at)"
     )

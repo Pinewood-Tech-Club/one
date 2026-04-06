@@ -39,7 +39,7 @@ class Config:
     SESSIONS_DB_PATH = "api_sessions.db"
 
     # Convex configuration
-    CONVEX_URL = os.environ.get("CONVEX_URL", "https://hearty-lemur-131.convex.cloud")
+    CONVEX_URL = os.environ.get("CONVEX_URL", "http://127.0.0.1:3210")
 
     # Mobile auth/token configuration
     MOBILE_ACCESS_TOKEN_TTL_SECONDS = int(os.environ.get("MOBILE_ACCESS_TOKEN_TTL_SECONDS", "900"))

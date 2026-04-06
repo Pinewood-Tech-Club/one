@@ -10,6 +10,7 @@ from db.sessions import create_session
 from extensions import limiter
 from mobile import service
 from onboarding import get_user as convex_get_user
+from schoology.routes import refresh_schoology_cache_for_user
 
 mobile_bp = Blueprint("mobile_api", __name__, url_prefix="/api/mobile/v1")
 
@@ -223,12 +224,14 @@ def mobile_auth_logout(user, token_payload):
 def mobile_me(user, token_payload):
     onboarding_step = "welcome"
     schoology_connected = False
+    profile_picture_url = None
 
     try:
         convex_user = convex_get_user(Config.CONVEX_URL, str(user["id"]))
         if convex_user:
             onboarding_step = convex_user.get("onboardingStep", "welcome")
             schoology_connected = convex_user.get("schoologyConnected", False)
+            profile_picture_url = convex_user.get("profilePictureUrl")
     except Exception:
         pass
 
@@ -239,6 +242,7 @@ def mobile_me(user, token_payload):
             "name": user["name"],
             "onboarding_step": onboarding_step,
             "schoology_connected": schoology_connected,
+            "profile_picture_url": profile_picture_url,
         }
     )
 
@@ -251,7 +255,10 @@ def mobile_convex_token(user, token_payload):
 
 @mobile_bp.route("/web/session-ticket", methods=["POST"])
 @mobile_auth_required
-@limiter.limit("30 per minute", key_func=_limit_by_mobile_user)
+# Keep generous headroom here: onboarding clients can refresh state frequently
+# while waiting for web flow completion, and this endpoint is already auth-gated
+# plus device-bound.
+@limiter.limit("120 per minute", key_func=_limit_by_mobile_user)
 def mobile_web_session_ticket(user, token_payload):
     data = request.get_json(silent=True) or {}
     device_id = str(data.get("device_id", ""))
@@ -291,10 +298,14 @@ def mobile_web_session_bootstrap():
 @limiter.limit("30 per minute", key_func=_limit_by_mobile_user)
 def mobile_register_device(user, token_payload):
     data = request.get_json(silent=True) or {}
+    device_id = str(data.get("device_id", ""))
+    if device_id != token_payload.get("device_id"):
+        return _json_error("invalid_request", 400)
+
     try:
         service.register_mobile_device(
             user_id=user["id"],
-            device_id=str(data.get("device_id", "")),
+            device_id=device_id,
             platform=str(data.get("platform", "")),
             app_version=str(data.get("app_version", "")),
             push_token=data.get("push_token"),
@@ -312,10 +323,14 @@ def mobile_register_device(user, token_payload):
 @limiter.limit("30 per minute", key_func=_limit_by_mobile_user)
 def mobile_unregister_device(user, token_payload):
     data = request.get_json(silent=True) or {}
+    device_id = str(data.get("device_id", ""))
+    if device_id != token_payload.get("device_id"):
+        return _json_error("invalid_request", 400)
+
     try:
         service.unregister_mobile_device(
             user_id=user["id"],
-            device_id=str(data.get("device_id", "")),
+            device_id=device_id,
         )
         return "", 204
     except service.MobileAuthError as exc:
@@ -332,3 +347,11 @@ def mobile_banner_upcoming():
     response = jsonify(payload)
     response.headers["Cache-Control"] = f"public, max-age={Config.BANNER_UPCOMING_CACHE_TTL_SECONDS}"
     return response
+
+
+@mobile_bp.route("/schoology/refresh", methods=["POST"])
+@mobile_auth_required
+@limiter.limit("10 per minute", key_func=_limit_by_mobile_user)
+def mobile_schoology_refresh(user, token_payload):
+    payload, status_code = refresh_schoology_cache_for_user(user["id"])
+    return jsonify(payload), status_code

@@ -34,6 +34,14 @@ SCHOOLOGY_PROVIDER = "schoology"
 SUPPORTED_AUTH_CODE_PROVIDERS = {GOOGLE_PROVIDER, SCHOOLOGY_PROVIDER}
 STATE_FLOW_GOOGLE = "google"
 STATE_FLOW_SCHOOLOGY = "schoology"
+MOBILE_NOTIFICATION_EVENT_ASSIGNMENT_DUE_SOON = "assignment_due_soon"
+MOBILE_NOTIFICATION_EVENT_GRADE_POSTED = "grade_posted"
+MOBILE_NOTIFICATION_EVENT_SCHOOLOGY_SYNC_FAILED = "schoology_sync_failed"
+SUPPORTED_MOBILE_NOTIFICATION_EVENTS = {
+    MOBILE_NOTIFICATION_EVENT_ASSIGNMENT_DUE_SOON,
+    MOBILE_NOTIFICATION_EVENT_GRADE_POSTED,
+    MOBILE_NOTIFICATION_EVENT_SCHOOLOGY_SYNC_FAILED,
+}
 PKCE_VERIFIER_RE = re.compile(r"^[A-Za-z0-9\-._~]{43,128}$")
 PKCE_CHALLENGE_RE = re.compile(r"^[A-Za-z0-9_-]{43,128}$")
 DEVICE_ID_RE = re.compile(r"^[A-Za-z0-9._:\-]{1,128}$")
@@ -298,6 +306,26 @@ def _pkce_s256(verifier: str) -> str:
     return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
 
 
+def _pkce_legacy_base64(verifier: str) -> str:
+    return base64.urlsafe_b64encode(verifier.encode("ascii")).rstrip(b"=").decode("ascii")
+
+
+def _is_valid_pkce_verifier_for_client(
+    verifier: str,
+    challenge: str,
+    platform: str,
+) -> bool:
+    if _pkce_s256(verifier) == challenge:
+        return True
+
+    # Backward compatibility for legacy Android clients that incorrectly sent
+    # base64url(verifier) while still labeling method as S256.
+    if platform.strip().lower() == "android" and _pkce_legacy_base64(verifier) == challenge:
+        return True
+
+    return False
+
+
 def exchange_auth_code(
     code: str,
     code_verifier: str,
@@ -331,7 +359,11 @@ def exchange_auth_code(
     if state_data.get("code_challenge_method") != "S256":
         raise MobileAuthError("invalid_grant", 400)
 
-    if _pkce_s256(code_verifier) != state_data.get("code_challenge"):
+    if not _is_valid_pkce_verifier_for_client(
+        code_verifier,
+        state_data.get("code_challenge", ""),
+        platform,
+    ):
         raise MobileAuthError("invalid_grant", 400)
 
     user = get_user_by_id(code_row["user_id"])
@@ -700,3 +732,30 @@ def unregister_mobile_device(user_id: int, device_id: str):
     now = now_utc()
     mobile_db.revoke_mobile_device(user_id=user_id, device_id=device_id, now=now)
     mobile_db.revoke_mobile_refresh_tokens_for_device(user_id=user_id, device_id=device_id, now=now)
+
+
+def enqueue_mobile_notification_event(
+    *,
+    user_id: int,
+    event_type: str,
+    payload: dict,
+    device_id: str | None = None,
+    available_at=None,
+) -> int:
+    if event_type not in SUPPORTED_MOBILE_NOTIFICATION_EVENTS:
+        raise MobileAuthError("invalid_request", 400)
+    if device_id is not None and not validate_device_id(device_id):
+        raise MobileAuthError("invalid_request", 400)
+    if not isinstance(payload, dict):
+        raise MobileAuthError("invalid_request", 400)
+
+    now = now_utc()
+    return mobile_db.insert_mobile_notification_event(
+        user_id=user_id,
+        device_id=device_id,
+        event_type=event_type,
+        payload=payload,
+        status="pending",
+        created_at=now,
+        available_at=available_at or now,
+    )

@@ -2,6 +2,7 @@
 Authentication routes
 """
 import logging
+import threading
 from flask import Blueprint, redirect, request, session, jsonify
 from config import Config
 from auth.google import get_google_auth_url, exchange_code_for_token, get_user_info
@@ -12,6 +13,22 @@ from onboarding import get_or_create_user as convex_get_or_create_user
 logger = logging.getLogger(__name__)
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/auth')
+
+
+def _bootstrap_convex_user(user_id: int):
+    try:
+        convex_get_or_create_user(Config.CONVEX_URL, str(user_id))
+    except Exception as exc:
+        logger.warning("Failed to create Convex user record for user %s: %s", user_id, exc)
+
+
+def _bootstrap_convex_user_async(user_id: int):
+    threading.Thread(
+        target=_bootstrap_convex_user,
+        args=(user_id,),
+        daemon=True,
+        name=f"convex-bootstrap-{user_id}",
+    ).start()
 
 
 @auth_bp.route("/google")
@@ -59,18 +76,15 @@ def auth_google_callback():
         # Get or create user account
         user_id = get_or_create_user(google_user_id, email, name)
 
-        # Create user record in Convex for onboarding state (non-blocking on failure)
-        try:
-            convex_get_or_create_user(Config.CONVEX_URL, str(user_id))
-        except Exception as e:
-            logger.warning(f"Failed to create Convex user record: {e}")
+        # Convex bootstrap can block on network; run it in the background.
+        _bootstrap_convex_user_async(user_id)
 
         # Create session
         session_id = create_session(user_id)
         session["session_id"] = session_id
 
-        # Redirect to frontend success page
-        return redirect(f"{Config.FRONTEND_URL}?success=true")
+        # Redirect to frontend
+        return redirect(Config.FRONTEND_URL)
 
     except Exception as e:
         logger.error(f"Authentication error: {e}")
@@ -85,4 +99,3 @@ def logout():
         delete_session(session_id)
     session.pop("session_id", None)
     return jsonify({"message": "Logged out successfully"})
-

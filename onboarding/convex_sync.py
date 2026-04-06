@@ -1,12 +1,61 @@
 """
 Convex synchronization functions for onboarding state
 """
+import os
+import queue
+import threading
+from typing import Any, Callable
+
 from convex import ConvexClient
+
+CONVEX_CALL_TIMEOUT_SECONDS = float(os.environ.get("CONVEX_CALL_TIMEOUT_SECONDS", "8"))
 
 
 def _get_client(convex_url: str) -> ConvexClient:
     """Get a Convex client instance"""
     return ConvexClient(convex_url)
+
+
+def _run_with_timeout(operation: str, callback: Callable[[], Any]) -> Any:
+    result_queue: queue.Queue[tuple[bool, Any]] = queue.Queue(maxsize=1)
+
+    def runner():
+        try:
+            result_queue.put((True, callback()))
+        except Exception as exc:
+            result_queue.put((False, exc))
+
+    thread = threading.Thread(
+        target=runner,
+        daemon=True,
+        name=f"convex-{operation.replace(':', '-')}",
+    )
+    thread.start()
+
+    try:
+        success, payload = result_queue.get(timeout=CONVEX_CALL_TIMEOUT_SECONDS)
+    except queue.Empty as exc:
+        raise TimeoutError(
+            f"Convex call timed out after {CONVEX_CALL_TIMEOUT_SECONDS}s ({operation})"
+        ) from exc
+
+    if success:
+        return payload
+    raise payload
+
+
+def _mutation(convex_url: str, name: str, args: dict) -> Any:
+    return _run_with_timeout(
+        f"mutation {name}",
+        lambda: _get_client(convex_url).mutation(name, args),
+    )
+
+
+def _query(convex_url: str, name: str, args: dict) -> Any:
+    return _run_with_timeout(
+        f"query {name}",
+        lambda: _get_client(convex_url).query(name, args),
+    )
 
 
 def get_or_create_user(convex_url: str, user_id: str) -> dict:
@@ -20,9 +69,7 @@ def get_or_create_user(convex_url: str, user_id: str) -> dict:
     Returns:
         User record from Convex
     """
-    client = _get_client(convex_url)
-
-    result = client.mutation("users:getOrCreate", {
+    result = _mutation(convex_url, "users:getOrCreate", {
         "userId": user_id,
     })
 
@@ -40,9 +87,7 @@ def get_user(convex_url: str, user_id: str) -> dict | None:
     Returns:
         User record or None if not found
     """
-    client = _get_client(convex_url)
-
-    result = client.query("users:getUserByUserId", {
+    result = _query(convex_url, "users:getUserByUserId", {
         "userId": user_id,
     })
 
@@ -61,9 +106,7 @@ def update_onboarding_step(convex_url: str, user_id: str, step: str) -> dict:
     Returns:
         Result dict with success status
     """
-    client = _get_client(convex_url)
-
-    result = client.mutation("users:updateOnboardingStep", {
+    result = _mutation(convex_url, "users:updateOnboardingStep", {
         "userId": user_id,
         "step": step,
     })
@@ -83,9 +126,7 @@ def update_schoology_connected(convex_url: str, user_id: str, connected: bool) -
     Returns:
         Result dict with success status
     """
-    client = _get_client(convex_url)
-
-    result = client.mutation("users:updateSchoologyConnected", {
+    result = _mutation(convex_url, "users:updateSchoologyConnected", {
         "userId": user_id,
         "connected": connected,
     })
@@ -105,9 +146,7 @@ def save_consent(convex_url: str, user_id: str, consent: dict) -> dict:
     Returns:
         Result dict with success status
     """
-    client = _get_client(convex_url)
-
-    result = client.mutation("users:saveConsent", {
+    result = _mutation(convex_url, "users:saveConsent", {
         "userId": user_id,
         "consent": consent,
     })

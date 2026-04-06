@@ -1,6 +1,7 @@
 """
 Database operations for mobile auth, refresh tokens, devices, and web session tickets.
 """
+import json
 import sqlite3
 from datetime import datetime, timezone
 
@@ -491,3 +492,115 @@ def consume_mobile_schoology_oauth_request(
         raise
     finally:
         conn.close()
+
+
+def insert_mobile_notification_event(
+    *,
+    user_id: int,
+    device_id: str | None,
+    event_type: str,
+    payload: dict,
+    status: str,
+    created_at: datetime,
+    available_at: datetime,
+) -> int:
+    conn = _connect()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO mobile_notification_events
+        (user_id, device_id, event_type, payload_json, status, created_at, available_at, processed_at, last_error)
+        VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL)
+        """,
+        (
+            user_id,
+            device_id,
+            event_type,
+            json.dumps(payload, separators=(",", ":"), sort_keys=True),
+            status,
+            to_db_time(created_at),
+            to_db_time(available_at),
+        ),
+    )
+    event_id = int(cursor.lastrowid)
+    conn.commit()
+    conn.close()
+    return event_id
+
+
+def fetch_pending_mobile_notification_events(now: datetime, limit: int = 100) -> list[dict]:
+    conn = _connect()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT id, user_id, device_id, event_type, payload_json, status, created_at, available_at, processed_at, last_error
+        FROM mobile_notification_events
+        WHERE status = 'pending' AND available_at <= ?
+        ORDER BY available_at ASC, id ASC
+        LIMIT ?
+        """,
+        (to_db_time(now), max(1, limit)),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+
+    results: list[dict] = []
+    for row in rows:
+        entry = dict(row)
+        try:
+            entry["payload"] = json.loads(entry.pop("payload_json"))
+        except Exception:
+            entry["payload"] = {}
+        results.append(entry)
+    return results
+
+
+def mark_mobile_notification_event_processing(event_id: int, now: datetime) -> int:
+    conn = _connect()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        UPDATE mobile_notification_events
+        SET status = 'processing', last_error = NULL
+        WHERE id = ? AND status = 'pending'
+        """,
+        (event_id,),
+    )
+    affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return affected
+
+
+def mark_mobile_notification_event_processed(event_id: int, now: datetime) -> int:
+    conn = _connect()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        UPDATE mobile_notification_events
+        SET status = 'processed', processed_at = ?, last_error = NULL
+        WHERE id = ?
+        """,
+        (to_db_time(now), event_id),
+    )
+    affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return affected
+
+
+def mark_mobile_notification_event_failed(event_id: int, now: datetime, error_message: str) -> int:
+    conn = _connect()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        UPDATE mobile_notification_events
+        SET status = 'failed', processed_at = ?, last_error = ?
+        WHERE id = ?
+        """,
+        (to_db_time(now), error_message[:1000], event_id),
+    )
+    affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return affected

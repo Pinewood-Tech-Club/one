@@ -319,7 +319,7 @@ def schoology_upcoming(user):
         days = request.args.get("days", 7, type=int)
         print(f"[DEBUG] Fetching upcoming assignments for next {days} days...")
 
-        assignments = service.get_upcoming_assignments(days=days)  # Automatically syncs to Convex
+        assignments = service.get_upcoming_assignments(days=days)
         print(f"[DEBUG] Retrieved {len(assignments)} upcoming assignments")
 
         return jsonify({"assignments": assignments})
@@ -334,18 +334,23 @@ def schoology_upcoming(user):
 @schoology_api_bp.route("/refresh", methods=["POST"])
 @auth_required
 def schoology_refresh(user):
-    """Refresh all Schoology data and update Convex cache"""
-    user_id = user["id"]
+    """Refresh all Schoology data and update Convex cache."""
+    payload, status_code = refresh_schoology_cache_for_user(user["id"])
+    return jsonify(payload), status_code
+
+
+def refresh_schoology_cache_for_user(user_id: int) -> tuple[dict, int]:
+    """Shared refresh flow used by both web-session and mobile-token routes."""
 
     # Check if a refresh is already in progress for this user
     with _refresh_lock:
         if user_id in _active_refreshes:
             print(f"[DEBUG] Refresh already in progress for user_id: {user_id}, returning success")
-            return jsonify({
+            return {
                 "success": True,
                 "alreadyInProgress": True,
                 "message": "Refresh already in progress"
-            })
+            }, 200
 
         # Mark this user as actively refreshing
         _active_refreshes.add(user_id)
@@ -357,25 +362,25 @@ def schoology_refresh(user):
         service = _create_service(user_id)
         if not service:
             print(f"[DEBUG] Failed to create Schoology service for user_id: {user_id}")
-            return jsonify({"error": "Schoology account not connected"}), 400
+            return {"error": "Schoology account not connected"}, 400
 
         print(f"[DEBUG] Refreshing all Schoology data...")
-        result = service.refresh_all()  # Fetches courses + assignments + upcoming, syncs to Convex
+        result = service.refresh_all()  # Fetches courses + assignments and syncs to Convex
         print(f"[DEBUG] Refresh result: {result}")
 
-        return jsonify({
+        return {
             "success": True,
             "coursesUpdated": result.get("courses_updated", 0),
             "assignmentsUpdated": result.get("assignments_updated", 0),
             "upcomingUpdated": result.get("upcoming_updated", 0),
             "message": "Cache updated successfully"
-        })
+        }, 200
 
     except Exception as e:
         print(f"[ERROR] Schoology refresh error: {str(e)}")
         import traceback
         traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+        return {"error": str(e)}, 500
 
     finally:
         # Always remove the user from active refreshes when done

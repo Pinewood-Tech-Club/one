@@ -1,7 +1,10 @@
 """
 General API routes
 """
+import json
 import time
+from hashlib import sha256
+
 from flask import Blueprint, jsonify, request
 from config import Config
 from auth.middleware import auth_required
@@ -59,7 +62,19 @@ def get_jwks():
     This endpoint is public and used by Convex to verify JWT signatures.
     """
     from auth.jwt_utils import get_jwks
-    return jsonify(get_jwks())
+
+    jwks = get_jwks()
+    payload = json.dumps(jwks, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    etag = sha256(payload).hexdigest()
+
+    if request.if_none_match.contains(etag):
+        response = api_bp.make_response(("", 304))
+    else:
+        response = jsonify(jwks)
+
+    response.headers["Cache-Control"] = "public, max-age=3600, stale-while-revalidate=86400"
+    response.headers["ETag"] = f"\"{etag}\""
+    return response
 
 
 @api_bp.route("/user/onboarding/start", methods=["POST"])
@@ -127,4 +142,3 @@ def save_user_consent(user):
         import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
-
