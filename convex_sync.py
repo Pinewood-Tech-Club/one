@@ -28,20 +28,18 @@ def sync_courses(convex_url: str, user_id: str, courses: list[dict]):
     return result
 
 
-def sync_assignments(convex_url: str, user_id: str, course_id: str, assignments: list[dict]):
+def sync_assignments(convex_url: str, course_id: str, assignments: list[dict]):
     """
     Update assignments cache in Convex
 
     Args:
         convex_url: Convex deployment URL
-        user_id: User ID (string)
         course_id: Course/section ID (string)
         assignments: List of assignment dictionaries from Schoology API (full objects)
     """
     client = _get_client(convex_url)
 
     result = client.mutation("schoologyCache:updateAssignments", {
-        "userId": user_id,
         "courseId": course_id,
         "assignments": assignments,
     })
@@ -49,19 +47,21 @@ def sync_assignments(convex_url: str, user_id: str, course_id: str, assignments:
     return result
 
 
-def sync_upcoming(convex_url: str, user_id: str, assignments: list[dict]):
+def sync_assignment_user_state(convex_url: str, user_id: str, course_id: str, assignments: list[dict]):
     """
-    Update upcoming assignments cache in Convex
+    Update per-user assignment state cache in Convex.
 
     Args:
         convex_url: Convex deployment URL
         user_id: User ID (string)
-        assignments: List of upcoming assignment dictionaries with course info
+        course_id: Course/section ID (string)
+        assignments: List of assignment dictionaries from Schoology API
     """
     client = _get_client(convex_url)
 
-    result = client.mutation("schoologyCache:updateUpcoming", {
+    result = client.mutation("schoologyCache:updateAssignmentUserState", {
         "userId": user_id,
+        "courseId": course_id,
         "assignments": assignments,
     })
 

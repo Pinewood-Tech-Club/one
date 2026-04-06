@@ -5,7 +5,13 @@ import schoolopy
 import requests_oauthlib
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
-from .convex_sync import sync_courses, sync_assignments, sync_upcoming, sync_profile_picture, clear_cache
+from .convex_sync import (
+    sync_courses,
+    sync_assignments,
+    sync_assignment_user_state,
+    sync_profile_picture,
+    clear_cache,
+)
 
 
 class SchoologyService:
@@ -122,13 +128,79 @@ class SchoologyService:
         Returns:
             List of assignment dictionaries
         """
-        assignments = self.sc.get_assignments(course_id)
-        assignment_dicts = [a.__dict__ for a in assignments]
+        assignment_dicts = self._fetch_section_assignments_paginated(course_id)
 
         if sync_to_convex:
-            sync_assignments(self.convex_url, self.user_id, course_id, assignment_dicts)
+            sync_assignments(self.convex_url, course_id, assignment_dicts)
+            sync_assignment_user_state(self.convex_url, self.user_id, course_id, assignment_dicts)
 
         return assignment_dicts
+
+    @staticmethod
+    def _coerce_positive_int(value) -> int | None:
+        """Best-effort conversion to a non-negative integer."""
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed >= 0 else None
+
+    def _fetch_section_assignments_paginated(self, section_id: str | int, page_limit: int = 200) -> list[dict]:
+        """
+        Fetch all assignments for a section by paging Schoology's assignments endpoint.
+        """
+        start = 0
+        page_count = 0
+        max_pages = 500  # Safety guard against malformed pagination metadata.
+        all_assignments: list[dict] = []
+        seen_ids: set[str] = set()
+
+        while page_count < max_pages:
+            payload = self.sc._get(
+                f"sections/{section_id}/assignments",
+                params={"start": start, "limit": page_limit},
+            )
+            page_count += 1
+
+            raw_assignments = payload.get("assignment", []) if isinstance(payload, dict) else []
+            if isinstance(raw_assignments, dict):
+                raw_assignments = [raw_assignments]
+            if not isinstance(raw_assignments, list):
+                break
+            if not raw_assignments:
+                break
+
+            page_new = 0
+            for raw in raw_assignments:
+                if not isinstance(raw, dict):
+                    continue
+                assignment_id = raw.get("id") or raw.get("grade_item_id")
+                dedupe_key = str(assignment_id) if assignment_id is not None else f"fallback:{start}:{page_new}"
+                if dedupe_key in seen_ids:
+                    continue
+                seen_ids.add(dedupe_key)
+                all_assignments.append(raw)
+                page_new += 1
+
+            total = self._coerce_positive_int(payload.get("total") if isinstance(payload, dict) else None)
+            count = self._coerce_positive_int(payload.get("count") if isinstance(payload, dict) else None)
+            page_size = count if count and count > 0 else len(raw_assignments)
+            next_start = start + page_size
+
+            if total is not None and next_start >= total:
+                break
+            if next_start <= start:
+                break
+            if page_new == 0:
+                break
+
+            start = next_start
+
+        print(
+            f"[DEBUG] Assignment pagination summary user={self.user_id} section={section_id} "
+            f"pages={page_count} total_rows={len(all_assignments)}"
+        )
+        return all_assignments
 
     @staticmethod
     def _parse_due_datetime(due_raw) -> datetime | None:
@@ -174,12 +246,12 @@ class SchoologyService:
 
         return None
 
-    def get_upcoming_assignments(self, days: int = 365) -> list[dict]:
+    def get_upcoming_assignments(self, days: int | None = 7) -> list[dict]:
         """
-        Get assignments due within the next N days across all courses
+        Get assignments due within the next N days across all courses.
 
         Args:
-            days: Number of days to look ahead (default: 7)
+            days: Number of days to look ahead. If None, returns all future assignments.
 
         Returns:
             List of assignment dictionaries with course info, sorted by due date
@@ -188,7 +260,7 @@ class SchoologyService:
         sections = self.sc.get_sections()
 
         now_utc = datetime.now(timezone.utc)
-        cutoff_utc = now_utc + timedelta(days=days)
+        cutoff_utc = now_utc + timedelta(days=days) if days is not None else None
         upcoming: list[tuple[datetime, dict]] = []
         total_seen = 0
         missing_due = 0
@@ -198,12 +270,12 @@ class SchoologyService:
         # Fetch assignments for each section
         for section in sections:
             try:
-                assignments = self.sc.get_assignments(section.id)
+                assignments = self._fetch_section_assignments_paginated(section.id)
 
-                for assignment in assignments:
+                for assignment_dict in assignments:
                     total_seen += 1
                     # Parse due date
-                    due_date_str = getattr(assignment, 'due', None)
+                    due_date_str = assignment_dict.get("due")
                     if not due_date_str:
                         missing_due += 1
                         continue
@@ -214,13 +286,14 @@ class SchoologyService:
                         continue
 
                     # Check if within range
-                    if now_utc <= due_date <= cutoff_utc:
-                        assignment_dict = assignment.__dict__.copy()
+                    within_upper_bound = cutoff_utc is None or due_date <= cutoff_utc
+                    if due_date >= now_utc and within_upper_bound:
+                        assignment_with_meta = assignment_dict.copy()
                         # Add course metadata
-                        assignment_dict['course_title'] = getattr(section, 'course_title', '')
-                        assignment_dict['section_id'] = section.id
-                        assignment_dict['section_title'] = getattr(section, 'section_title', '')
-                        upcoming.append((due_date, assignment_dict))
+                        assignment_with_meta["course_title"] = getattr(section, "course_title", "")
+                        assignment_with_meta["section_id"] = section.id
+                        assignment_with_meta["section_title"] = getattr(section, "section_title", "")
+                        upcoming.append((due_date, assignment_with_meta))
                     else:
                         out_of_window += 1
 
@@ -236,11 +309,9 @@ class SchoologyService:
             f"[DEBUG] Upcoming filter summary user={self.user_id} total={total_seen} "
             f"included={len(upcoming_assignments)} missing_due={missing_due} "
             f"parse_failed={parse_failed} out_of_window={out_of_window} "
-            f"window_start={now_utc.isoformat()} window_end={cutoff_utc.isoformat()}"
+            f"window_start={now_utc.isoformat()} "
+            f"window_end={(cutoff_utc.isoformat() if cutoff_utc is not None else 'none')}"
         )
-
-        # Sync to Convex
-        sync_upcoming(self.convex_url, self.user_id, upcoming_assignments)
 
         return upcoming_assignments
 
@@ -256,21 +327,19 @@ class SchoologyService:
 
         # Fetch and sync assignments for each course
         total_assignments = 0
+        upcoming_count = 0
+        now_utc = datetime.now(timezone.utc)
         for course in courses:
             try:
-                assignments = self.get_assignments(course['id'], sync_to_convex=True)
+                assignments = self.get_assignments(course["id"], sync_to_convex=True)
                 total_assignments += len(assignments)
+                for assignment in assignments:
+                    due_date = self._parse_due_datetime(assignment.get("due"))
+                    if due_date and due_date >= now_utc:
+                        upcoming_count += 1
             except Exception as e:
                 print(f"[WARNING] Error refreshing assignments for course {course['id']}: {e}")
                 continue
-
-        # Fetch and sync upcoming assignments
-        try:
-            upcoming = self.get_upcoming_assignments()  # Uses default of 365 days
-            upcoming_count = len(upcoming)
-        except Exception as e:
-            print(f"[WARNING] Error refreshing upcoming assignments: {e}")
-            upcoming_count = 0
 
         # Refresh profile picture (lightweight /users/me call)
         try:

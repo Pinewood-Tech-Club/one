@@ -63,7 +63,7 @@ courses = service.get_courses()
 # Fetch assignments for a course
 assignments = service.get_assignments(course_id="12345")
 
-# Get upcoming assignments (within next 7 days)
+# Get upcoming assignments (within next 7 days, computed from Schoology API)
 upcoming = service.get_upcoming_assignments(days=7)
 
 # Refresh all data in Convex cache
