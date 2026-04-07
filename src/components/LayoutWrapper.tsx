@@ -69,6 +69,20 @@ export function LayoutWrapper({ children }: { children: React.ReactNode }) {
     return <AppLayout />;
   }
 
-  // Not authenticated, render children (home page)
+  // Not authenticated — redirect to login for known protected routes
+  const isProtectedRoute =
+    pathname === '/upcoming' ||
+    pathname === '/schedule' ||
+    pathname === '/grades' ||
+    pathname.startsWith('/chat') ||
+    pathname === '/user' ||
+    pathname.startsWith('/onboarding') ||
+    pathname.startsWith('/dashboard');
+
+  if (isProtectedRoute) {
+    window.location.replace('/login');
+    return null;
+  }
+
   return <>{children}</>;
 }

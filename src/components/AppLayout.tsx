@@ -23,7 +23,7 @@ function pathnameToPage(pathname: string): Page {
   if (pathname === '/' || pathname === '/upcoming') return 'upcoming';
   if (pathname === '/schedule') return 'schedule';
   if (pathname === '/grades') return 'grades';
-  if (pathname === '/chat') return 'chat';
+  if (pathname === '/chat' || pathname === '/chat/') return 'chat';
   if (pathname === '/user') return 'user';
   return 'upcoming'; // default
 }

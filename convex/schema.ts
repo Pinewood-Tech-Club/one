@@ -7,6 +7,83 @@ export default defineSchema({
     sidebarCollapsed: v.boolean(),
   }).index("by_user", ["userId"]),
 
+  chatThreads: defineTable({
+    userId: v.string(),
+    title: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    lastMessageAt: v.number(),
+    archivedAt: v.optional(v.number()),
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_updated", ["userId", "updatedAt"]),
+
+  chatMessages: defineTable({
+    threadId: v.id("chatThreads"),
+    userId: v.string(),
+    role: v.union(
+      v.literal("user"),
+      v.literal("assistant"),
+      v.literal("system")
+    ),
+    content: v.string(),
+    status: v.union(
+      v.literal("queued"),
+      v.literal("streaming"),
+      v.literal("completed"),
+      v.literal("failed"),
+      v.literal("cancelled")
+    ),
+    chunkSequence: v.optional(v.number()),
+    providerMessageId: v.optional(v.string()),
+    error: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    completedAt: v.optional(v.number()),
+  })
+    .index("by_thread_created", ["threadId", "createdAt"])
+    .index("by_user_thread", ["userId", "threadId"]),
+
+  chatGenerations: defineTable({
+    threadId: v.id("chatThreads"),
+    userId: v.string(),
+    userMessageId: v.id("chatMessages"),
+    assistantMessageId: v.id("chatMessages"),
+    clientRequestId: v.string(),
+    status: v.union(
+      v.literal("queued"),
+      v.literal("streaming"),
+      v.literal("completed"),
+      v.literal("failed"),
+      v.literal("cancelled")
+    ),
+    activity: v.optional(
+      v.union(
+        v.literal("thinking"),
+        v.literal("streaming_text"),
+        v.literal("tool_running"),
+        v.literal("post_tool_reasoning")
+      )
+    ),
+    provider: v.string(),
+    model: v.string(),
+    cancelRequested: v.boolean(),
+    errorCode: v.optional(v.string()),
+    errorMessage: v.optional(v.string()),
+    providerMessageId: v.optional(v.string()),
+    usage: v.optional(v.any()),
+    createdAt: v.number(),
+    startedAt: v.optional(v.number()),
+    updatedAt: v.number(),
+    completedAt: v.optional(v.number()),
+    lastTextAt: v.optional(v.number()),
+  })
+    .index("by_thread_status", ["threadId", "status"])
+    .index("by_user", ["userId"])
+    .index("by_status_updated", ["status", "updatedAt"])
+    .index("by_assistant_message", ["assistantMessageId"])
+    .index("by_user_request", ["userId", "clientRequestId"]),
+
   // Schoology cache tables - normalized to avoid per-user duplication.
   schoologyCourses: defineTable({
     courseId: v.string(), // Schoology section ID
