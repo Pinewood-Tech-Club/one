@@ -40,6 +40,21 @@ class Config:
 
     # Convex configuration
     CONVEX_URL = os.environ.get("CONVEX_URL", "http://127.0.0.1:3210")
+    CONVEX_ADMIN_KEY = os.environ.get("CONVEX_ADMIN_KEY")
+
+    # Chat / LLM configuration
+    LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "https://openrouter.ai/api/v1")
+    LLM_API_KEY = os.environ.get("LLM_API_KEY")
+    LLM_MODEL = os.environ.get("LLM_MODEL", "")
+    LLM_CONNECT_TIMEOUT_SECONDS = float(os.environ.get("LLM_CONNECT_TIMEOUT_SECONDS", "10"))
+    LLM_IDLE_TIMEOUT_SECONDS = float(os.environ.get("LLM_IDLE_TIMEOUT_SECONDS", "30"))
+    CHAT_INTERNAL_SECRET = os.environ.get("CHAT_INTERNAL_SECRET")
+    CHAT_STALE_AFTER_SECONDS = int(os.environ.get("CHAT_STALE_AFTER_SECONDS", "120"))
+    CHAT_CONVEX_HEARTBEAT_MS = int(os.environ.get("CHAT_CONVEX_HEARTBEAT_MS", "5000"))
+    CHAT_SSE_HEARTBEAT_SECONDS = int(os.environ.get("CHAT_SSE_HEARTBEAT_SECONDS", "15"))
+    CHAT_REDIS_ACTIVE_TTL_SECONDS = int(os.environ.get("CHAT_REDIS_ACTIVE_TTL_SECONDS", "3600"))
+    CHAT_REDIS_FINAL_TTL_SECONDS = int(os.environ.get("CHAT_REDIS_FINAL_TTL_SECONDS", "600"))
+    UPSTASH_REDIS_URL = os.environ.get("UPSTASH_REDIS_URL")
 
     # Mobile auth/token configuration
     MOBILE_ACCESS_TOKEN_TTL_SECONDS = int(os.environ.get("MOBILE_ACCESS_TOKEN_TTL_SECONDS", "900"))

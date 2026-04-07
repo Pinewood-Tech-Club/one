@@ -11,6 +11,7 @@ from extensions import limiter
 # Import blueprints
 from auth.routes import auth_bp
 from api.routes import api_bp
+from internal_chat.routes import internal_chat_bp
 from schoology.routes import oauth_bp as schoology_oauth_bp, schoology_api_bp
 from mobile.routes import mobile_bp
 
@@ -43,6 +44,7 @@ def create_app():
     # Register blueprints
     app.register_blueprint(auth_bp)
     app.register_blueprint(api_bp)
+    app.register_blueprint(internal_chat_bp)
     app.register_blueprint(schoology_oauth_bp)
     app.register_blueprint(schoology_api_bp)
     app.register_blueprint(mobile_bp)
