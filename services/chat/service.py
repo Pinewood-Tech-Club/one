@@ -109,7 +109,7 @@ def run_generation(generation_id: str) -> GenerationRunResult:
         )
 
     def cancel_if_requested():
-        if not convex_sync.is_generation_cancel_requested(context.generation_id):
+        if not cancel_flag.is_set() and not convex_sync.is_generation_cancel_requested(context.generation_id):
             return
         completed_at = _now_ms()
         convex_sync.mark_generation_cancelled(
@@ -162,6 +162,7 @@ def run_generation(generation_id: str) -> GenerationRunResult:
     )
 
     heartbeat_stop = threading.Event()
+    cancel_flag = threading.Event()  # set by worker thread when Convex reports cancel requested
 
     # Single background worker for all async I/O tasks (delta writes + heartbeats).
     # Keeps thread count fixed at 2 per generation regardless of traffic.
@@ -206,9 +207,7 @@ def run_generation(generation_id: str) -> GenerationRunResult:
             content=content_snapshot,
             updated_at=now,
         ))
-
-        # Check for cancellation synchronously (quick Convex query)
-        cancel_if_requested()
+        worker_queue.put(lambda: cancel_flag.set() if convex_sync.is_generation_cancel_requested(context.generation_id) else None)
 
     def heartbeat_loop():
         interval_seconds = max(Config.CHAT_CONVEX_HEARTBEAT_MS / 1000.0, 1.0)
