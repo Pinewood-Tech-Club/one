@@ -14,6 +14,8 @@ def init_db():
 def init_sessions_db():
     """Initialize sessions database for Flask session management"""
     conn = sqlite3.connect(Config.SESSIONS_DB_PATH)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
     cursor = conn.cursor()
 
     # Drop old tables if they exist
@@ -39,6 +41,8 @@ def init_sessions_db():
 def init_main_db():
     """Initialize main database for persistent user data"""
     conn = sqlite3.connect(Config.MAIN_DB_PATH)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
     cursor = conn.cursor()
 
     # Users table - persistent user accounts

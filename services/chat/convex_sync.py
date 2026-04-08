@@ -11,32 +11,48 @@ from convex import ConvexClient
 from config import Config
 
 CONVEX_CALL_TIMEOUT_SECONDS = float(os.environ.get("CONVEX_CALL_TIMEOUT_SECONDS", "8"))
+_POOL_SIZE = 5
 
-_client_lock = threading.Lock()
-_client: ConvexClient | None = None
+_pool: queue.Queue[ConvexClient] = queue.Queue()
+_pool_lock = threading.Lock()
+_pool_ready = False
 
 
-def _get_client() -> ConvexClient:
-    global _client
-    if not Config.CONVEX_ADMIN_KEY:
-        raise RuntimeError("CONVEX_ADMIN_KEY is not configured")
-    if _client is None:
-        with _client_lock:
-            if _client is None:
+def _ensure_pool() -> queue.Queue[ConvexClient]:
+    global _pool_ready
+    if _pool_ready:
+        return _pool
+    with _pool_lock:
+        if not _pool_ready:
+            if not Config.CONVEX_ADMIN_KEY:
+                raise RuntimeError("CONVEX_ADMIN_KEY is not configured")
+            for _ in range(_POOL_SIZE):
                 c = ConvexClient(Config.CONVEX_URL)
                 c.set_admin_auth(Config.CONVEX_ADMIN_KEY)
-                _client = c
-    return _client
+                _pool.put(c)
+            _pool_ready = True
+    return _pool
 
 
-def _run_with_timeout(operation: str, callback: Callable[[], Any]) -> Any:
+def _run_with_timeout(operation: str, callback: Callable[[ConvexClient], Any]) -> Any:
+    pool = _ensure_pool()
+
+    try:
+        client = pool.get(timeout=CONVEX_CALL_TIMEOUT_SECONDS)
+    except queue.Empty as exc:
+        raise TimeoutError(
+            f"No Convex client available after {CONVEX_CALL_TIMEOUT_SECONDS}s ({operation})"
+        ) from exc
+
     result_queue: queue.Queue[tuple[bool, Any]] = queue.Queue(maxsize=1)
 
     def runner():
         try:
-            result_queue.put((True, callback()))
+            result_queue.put((True, callback(client)))
         except Exception as exc:
             result_queue.put((False, exc))
+        finally:
+            pool.put(client)
 
     thread = threading.Thread(
         target=runner,
@@ -48,6 +64,7 @@ def _run_with_timeout(operation: str, callback: Callable[[], Any]) -> Any:
     try:
         success, payload = result_queue.get(timeout=CONVEX_CALL_TIMEOUT_SECONDS)
     except queue.Empty as exc:
+        # Thread is still running and will return the client to the pool when done.
         raise TimeoutError(
             f"Convex chat call timed out after {CONVEX_CALL_TIMEOUT_SECONDS}s ({operation})"
         ) from exc
@@ -60,14 +77,14 @@ def _run_with_timeout(operation: str, callback: Callable[[], Any]) -> Any:
 def _query(name: str, args: dict[str, Any]) -> Any:
     return _run_with_timeout(
         f"query {name}",
-        lambda: _get_client().query(name, args),
+        lambda client: client.query(name, args),
     )
 
 
 def _mutation(name: str, args: dict[str, Any]) -> Any:
     return _run_with_timeout(
         f"mutation {name}",
-        lambda: _get_client().mutation(name, args),
+        lambda client: client.mutation(name, args),
     )
 
 

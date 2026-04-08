@@ -6,12 +6,11 @@ import sqlite3
 from datetime import datetime, timezone
 
 from config import Config
+from db.pool import get_conn
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(Config.MAIN_DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    return get_conn(Config.MAIN_DB_PATH)
 
 
 def utcnow() -> datetime:
