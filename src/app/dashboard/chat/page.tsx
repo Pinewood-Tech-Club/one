@@ -206,11 +206,8 @@ function MessageBubble({
 // ── Main chat page ────────────────────────────────────────────────────────────
 
 export default function ChatPage() {
-  const [selectedThreadId, setSelectedThreadId] = useState<Id<'chatThreads'> | null>(() => {
-    if (typeof window === 'undefined') return null;
-    const hash = window.location.hash.slice(1);
-    return hash ? (hash as Id<'chatThreads'>) : null;
-  });
+  const [selectedThreadId, setSelectedThreadId] = useState<Id<'chatThreads'> | null>(null);
+  const [hashInitialized, setHashInitialized] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [streaming, setStreaming] = useState<StreamingState>(null);
@@ -302,14 +299,22 @@ export default function ChatPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeGeneration]);
 
+  // Read hash on mount to restore selected thread
+  useEffect(() => {
+    const hash = window.location.hash.slice(1);
+    if (hash) setSelectedThreadId(hash as Id<'chatThreads'>);
+    setHashInitialized(true);
+  }, []);
+
   // Sync selected thread to URL hash
   useEffect(() => {
+    if (!hashInitialized) return;
     if (selectedThreadId) {
-      window.history.replaceState(null, '', `/chat/#${selectedThreadId}`);
+      window.history.replaceState(null, '', `#${selectedThreadId}`);
     } else {
-      window.history.replaceState(null, '', '/chat/');
+      window.history.replaceState(null, '', window.location.pathname);
     }
-  }, [selectedThreadId]);
+  }, [selectedThreadId, hashInitialized]);
 
   // Auto-scroll to bottom
   useEffect(() => {
