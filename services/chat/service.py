@@ -163,70 +163,51 @@ def run_generation(generation_id: str) -> GenerationRunResult:
 
     heartbeat_stop = threading.Event()
 
-    # Single writer thread for Redis delta writes — avoids thread-per-token
-    # overhead and ensures tokens are written to the stream in order.
-    delta_queue: queue.Queue = queue.Queue()
+    # Single background worker for all async I/O tasks (delta writes + heartbeats).
+    # Keeps thread count fixed at 2 per generation regardless of traffic.
+    worker_queue: queue.Queue = queue.Queue()
 
-    def delta_writer():
+    def background_worker():
         while True:
-            task = delta_queue.get()
+            task = worker_queue.get()
             if task is None:
                 break
             try:
                 task()
             except Exception as e:
                 logger.warning(
-                    "chat_append_delta_failed generation_id=%s error=%s",
+                    "chat_background_task_failed generation_id=%s error=%s",
                     context.generation_id,
                     str(e),
                 )
 
-    delta_writer_thread = threading.Thread(
-        target=delta_writer,
+    worker_thread = threading.Thread(
+        target=background_worker,
         daemon=True,
-        name=f"delta-writer-{context.generation_id}",
+        name=f"chat-worker-{context.generation_id}",
     )
-    delta_writer_thread.start()
+    worker_thread.start()
 
     def send_heartbeat():
         now = _now_ms()
+        content_snapshot = accumulated_content
+        activity_snapshot = last_activity
+        text_at_snapshot = last_text_at
 
-        # Fire-and-forget heartbeat operations to avoid blocking the heartbeat loop
-        def _heartbeat_task():
-            try:
-                convex_sync.heartbeat_generation(
-                    context.generation_id,
-                    now,
-                    last_text_at=last_text_at if accumulated_content else None,
-                    activity=last_activity,
-                )
-            except Exception as e:
-                logger.warning(
-                    "chat_heartbeat_convex_failed generation_id=%s error=%s",
-                    context.generation_id,
-                    str(e),
-                )
+        worker_queue.put(lambda: convex_sync.heartbeat_generation(
+            context.generation_id,
+            now,
+            last_text_at=text_at_snapshot if content_snapshot else None,
+            activity=activity_snapshot,
+        ))
+        worker_queue.put(lambda: live_stream.touch_live_state(
+            context.generation_id,
+            active=True,
+            content=content_snapshot,
+            updated_at=now,
+        ))
 
-        def _live_stream_task():
-            try:
-                live_stream.touch_live_state(
-                    context.generation_id,
-                    active=True,
-                    content=accumulated_content,
-                    updated_at=now,
-                )
-            except Exception as e:
-                logger.warning(
-                    "chat_heartbeat_live_stream_failed generation_id=%s error=%s",
-                    context.generation_id,
-                    str(e),
-                )
-
-        # Submit both operations to background threads without waiting
-        threading.Thread(target=_heartbeat_task, daemon=True, name=f"hb-convex-{context.generation_id}").start()
-        threading.Thread(target=_live_stream_task, daemon=True, name=f"hb-stream-{context.generation_id}").start()
-
-        # Check for cancellation synchronously (quick operation)
+        # Check for cancellation synchronously (quick Convex query)
         cancel_if_requested()
 
     def heartbeat_loop():
@@ -246,8 +227,8 @@ def run_generation(generation_id: str) -> GenerationRunResult:
     except ValueError as exc:
         heartbeat_stop.set()
         heartbeat_thread.join(timeout=0.1)
-        delta_queue.put(None)
-        delta_writer_thread.join(timeout=0.1)
+        worker_queue.put(None)
+        worker_thread.join(timeout=0.1)
         completed_at = _now_ms()
         error_message = _truncate_error(str(exc))
         convex_sync.mark_generation_failed(
@@ -272,10 +253,10 @@ def run_generation(generation_id: str) -> GenerationRunResult:
         last_text_at = _now_ms()
         last_activity = "streaming_text"
 
-        # Enqueue Redis write — single writer thread preserves order with no per-token thread overhead
+        # Enqueue Redis write through the shared background worker
         token_content = delta.content
         token_at = last_text_at
-        delta_queue.put(lambda: live_stream.append_delta(
+        worker_queue.put(lambda: live_stream.append_delta(
             context.generation_id,
             delta=token_content,
             status="streaming",
@@ -301,8 +282,8 @@ def run_generation(generation_id: str) -> GenerationRunResult:
         cancel_if_requested()
         heartbeat_stop.set()
         heartbeat_thread.join(timeout=0.1)
-        delta_queue.put(None)
-        delta_writer_thread.join(timeout=2.0)
+        worker_queue.put(None)
+        worker_thread.join(timeout=2.0)
         completed_at = _now_ms()
         convex_sync.mark_generation_completed(
             context.generation_id,
@@ -337,8 +318,8 @@ def run_generation(generation_id: str) -> GenerationRunResult:
     except _GenerationCancelled:
         heartbeat_stop.set()
         heartbeat_thread.join(timeout=0.1)
-        delta_queue.put(None)
-        delta_writer_thread.join(timeout=2.0)
+        worker_queue.put(None)
+        worker_thread.join(timeout=2.0)
         return GenerationRunResult(
             generation_id=context.generation_id,
             status="cancelled",
@@ -348,8 +329,8 @@ def run_generation(generation_id: str) -> GenerationRunResult:
     except Exception as exc:
         heartbeat_stop.set()
         heartbeat_thread.join(timeout=0.1)
-        delta_queue.put(None)
-        delta_writer_thread.join(timeout=2.0)
+        worker_queue.put(None)
+        worker_thread.join(timeout=2.0)
         completed_at = _now_ms()
         error_code = _error_code_for_exception(exc)
         error_message = _truncate_error(str(exc))
