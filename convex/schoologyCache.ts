@@ -166,6 +166,131 @@ function mergeAssignmentRecord(
   return merged;
 }
 
+function getAssignmentId(assignment: any) {
+  return String(assignment.id || assignment.grade_item_id || "");
+}
+
+async function upsertSharedAssignmentsForCourse(
+  ctx: any,
+  courseId: string,
+  assignments: any[],
+  timestamp: number,
+) {
+  const existingAssignments = await ctx.db
+    .query("schoologyAssignments")
+    .withIndex("by_course", (q: any) => q.eq("courseId", courseId))
+    .collect();
+
+  const existingMap = new Map<string, any>(
+    existingAssignments.map((assignment: any) => [assignment.assignmentId, assignment])
+  );
+
+  const seenAssignmentIds = new Set<string>();
+
+  for (const assignment of assignments) {
+    const assignmentId = getAssignmentId(assignment);
+    if (!assignmentId) {
+      continue;
+    }
+
+    seenAssignmentIds.add(assignmentId);
+
+    const dueRaw =
+      assignment.due !== undefined && assignment.due !== null
+        ? String(assignment.due)
+        : undefined;
+    const dueAtMs = parseDueToMs(assignment.due);
+
+    const existing = existingMap.get(assignmentId);
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        data: assignment,
+        dueRaw,
+        dueAtMs,
+        lastSyncedAt: timestamp,
+      });
+    } else {
+      await ctx.db.insert("schoologyAssignments", {
+        courseId,
+        assignmentId,
+        data: assignment,
+        dueRaw,
+        dueAtMs,
+        lastSyncedAt: timestamp,
+      });
+    }
+  }
+
+  for (const existing of existingAssignments) {
+    if (!seenAssignmentIds.has(existing.assignmentId)) {
+      await ctx.db.delete(existing._id);
+    }
+  }
+
+  return seenAssignmentIds.size;
+}
+
+async function upsertAssignmentUserStateForCourse(
+  ctx: any,
+  userId: string,
+  courseId: string,
+  assignments: any[],
+  timestamp: number,
+) {
+  const existingStates = await ctx.db
+    .query("schoologyAssignmentUserState")
+    .withIndex("by_user_and_course", (q: any) =>
+      q.eq("userId", userId).eq("courseId", courseId)
+    )
+    .collect();
+
+  const existingMap = new Map<string, any>(
+    existingStates.map((state: any) => [state.assignmentId, state])
+  );
+
+  const seenAssignmentIds = new Set<string>();
+
+  for (const assignment of assignments) {
+    const assignmentId = getAssignmentId(assignment);
+    if (!assignmentId) {
+      continue;
+    }
+
+    seenAssignmentIds.add(assignmentId);
+    const userState = extractAssignmentUserState(assignment);
+    const existing = existingMap.get(assignmentId);
+
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        completed: userState.completed,
+        completionStatus: userState.completionStatus,
+        grade: userState.grade,
+        data: userState.data,
+        lastSyncedAt: timestamp,
+      });
+    } else {
+      await ctx.db.insert("schoologyAssignmentUserState", {
+        userId,
+        courseId,
+        assignmentId,
+        completed: userState.completed,
+        completionStatus: userState.completionStatus,
+        grade: userState.grade,
+        data: userState.data,
+        lastSyncedAt: timestamp,
+      });
+    }
+  }
+
+  for (const existing of existingStates) {
+    if (!seenAssignmentIds.has(existing.assignmentId)) {
+      await ctx.db.delete(existing._id);
+    }
+  }
+
+  return seenAssignmentIds.size;
+}
+
 // ============================================================================
 // QUERIES - Frontend reads cached data (auth-protected)
 // ============================================================================
@@ -449,59 +574,13 @@ export const updateAssignments = mutation({
   },
   handler: async (ctx, args) => {
     const timestamp = Date.now();
-
-    const existingAssignments = await ctx.db
-      .query("schoologyAssignments")
-      .withIndex("by_course", (q) => q.eq("courseId", args.courseId))
-      .collect();
-
-    const existingMap = new Map(
-      existingAssignments.map((assignment) => [assignment.assignmentId, assignment])
+    const count = await upsertSharedAssignmentsForCourse(
+      ctx,
+      args.courseId,
+      args.assignments,
+      timestamp
     );
-
-    const seenAssignmentIds = new Set<string>();
-
-    for (const assignment of args.assignments) {
-      const assignmentId = String(assignment.id || assignment.grade_item_id || "");
-      if (!assignmentId) {
-        continue;
-      }
-
-      seenAssignmentIds.add(assignmentId);
-
-      const dueRaw =
-        assignment.due !== undefined && assignment.due !== null
-          ? String(assignment.due)
-          : undefined;
-      const dueAtMs = parseDueToMs(assignment.due);
-
-      const existing = existingMap.get(assignmentId);
-      if (existing) {
-        await ctx.db.patch(existing._id, {
-          data: assignment,
-          dueRaw,
-          dueAtMs,
-          lastSyncedAt: timestamp,
-        });
-      } else {
-        await ctx.db.insert("schoologyAssignments", {
-          courseId: args.courseId,
-          assignmentId,
-          data: assignment,
-          dueRaw,
-          dueAtMs,
-          lastSyncedAt: timestamp,
-        });
-      }
-    }
-
-    for (const existing of existingAssignments) {
-      if (!seenAssignmentIds.has(existing.assignmentId)) {
-        await ctx.db.delete(existing._id);
-      }
-    }
-
-    return { success: true, count: seenAssignmentIds.size };
+    return { success: true, count };
   },
 });
 
@@ -516,59 +595,42 @@ export const updateAssignmentUserState = mutation({
   },
   handler: async (ctx, args) => {
     const timestamp = Date.now();
-
-    const existingStates = await ctx.db
-      .query("schoologyAssignmentUserState")
-      .withIndex("by_user_and_course", (q) =>
-        q.eq("userId", args.userId).eq("courseId", args.courseId)
-      )
-      .collect();
-
-    const existingMap = new Map(
-      existingStates.map((state) => [state.assignmentId, state])
+    const count = await upsertAssignmentUserStateForCourse(
+      ctx,
+      args.userId,
+      args.courseId,
+      args.assignments,
+      timestamp
     );
+    return { success: true, count };
+  },
+});
 
-    const seenAssignmentIds = new Set<string>();
-
-    for (const assignment of args.assignments) {
-      const assignmentId = String(assignment.id || assignment.grade_item_id || "");
-      if (!assignmentId) {
-        continue;
-      }
-
-      seenAssignmentIds.add(assignmentId);
-      const userState = extractAssignmentUserState(assignment);
-      const existing = existingMap.get(assignmentId);
-
-      if (existing) {
-        await ctx.db.patch(existing._id, {
-          completed: userState.completed,
-          completionStatus: userState.completionStatus,
-          grade: userState.grade,
-          data: userState.data,
-          lastSyncedAt: timestamp,
-        });
-      } else {
-        await ctx.db.insert("schoologyAssignmentUserState", {
-          userId: args.userId,
-          courseId: args.courseId,
-          assignmentId,
-          completed: userState.completed,
-          completionStatus: userState.completionStatus,
-          grade: userState.grade,
-          data: userState.data,
-          lastSyncedAt: timestamp,
-        });
-      }
-    }
-
-    for (const existing of existingStates) {
-      if (!seenAssignmentIds.has(existing.assignmentId)) {
-        await ctx.db.delete(existing._id);
-      }
-    }
-
-    return { success: true, count: seenAssignmentIds.size };
+/**
+ * Update shared assignments cache and per-user assignment state for a course.
+ */
+export const updateCourseAssignments = mutation({
+  args: {
+    userId: v.string(),
+    courseId: v.string(),
+    assignments: v.array(v.any()),
+  },
+  handler: async (ctx, args) => {
+    const timestamp = Date.now();
+    const count = await upsertSharedAssignmentsForCourse(
+      ctx,
+      args.courseId,
+      args.assignments,
+      timestamp
+    );
+    await upsertAssignmentUserStateForCourse(
+      ctx,
+      args.userId,
+      args.courseId,
+      args.assignments,
+      timestamp
+    );
+    return { success: true, count };
   },
 });
 
