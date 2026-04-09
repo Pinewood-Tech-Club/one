@@ -1,9 +1,12 @@
 """
 Convex cache synchronization functions
 """
+from functools import lru_cache
+
 from convex import ConvexClient
 
 
+@lru_cache(maxsize=4)
 def _get_client(convex_url: str) -> ConvexClient:
     """Get a Convex client instance"""
     return ConvexClient(convex_url)
@@ -60,6 +63,27 @@ def sync_assignment_user_state(convex_url: str, user_id: str, course_id: str, as
     client = _get_client(convex_url)
 
     result = client.mutation("schoologyCache:updateAssignmentUserState", {
+        "userId": user_id,
+        "courseId": course_id,
+        "assignments": assignments,
+    })
+
+    return result
+
+
+def sync_course_assignments(convex_url: str, user_id: str, course_id: str, assignments: list[dict]):
+    """
+    Update shared assignments and per-user assignment state for a course.
+
+    Args:
+        convex_url: Convex deployment URL
+        user_id: User ID (string)
+        course_id: Course/section ID (string)
+        assignments: List of assignment dictionaries from Schoology API
+    """
+    client = _get_client(convex_url)
+
+    result = client.mutation("schoologyCache:updateCourseAssignments", {
         "userId": user_id,
         "courseId": course_id,
         "assignments": assignments,

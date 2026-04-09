@@ -1,14 +1,15 @@
 """
 Schoology API client wrapper
 """
+import json
+from xml.sax.saxutils import escape
 import schoolopy
 import requests_oauthlib
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 from .convex_sync import (
     sync_courses,
-    sync_assignments,
-    sync_assignment_user_state,
+    sync_course_assignments,
     sync_profile_picture,
     clear_cache,
 )
@@ -99,6 +100,123 @@ class SchoologyService:
 
         self.sc = schoolopy.Schoology(auth, api_host=api_host)
 
+    @staticmethod
+    def _chunked(items: list[str], chunk_size: int) -> list[list[str]]:
+        return [
+            items[index:index + chunk_size]
+            for index in range(0, len(items), chunk_size)
+        ]
+
+    @staticmethod
+    def _normalize_api_path(path: str) -> str:
+        normalized = str(path).strip()
+        if normalized.startswith("/v1/"):
+            return normalized[4:].lstrip("/")
+        return normalized.lstrip("/")
+
+    def _build_api_url(self, path: str, params: dict | None = None) -> str:
+        url = f"{self.sc.api_host.rstrip('/')}/{self._normalize_api_path(path)}"
+        if params:
+            query = urlencode(params, doseq=True)
+            if query:
+                url = f"{url}?{query}"
+        return url
+
+    def _request_schoology(self, method: str, path: str, *, params: dict | None = None,
+                           data: str | bytes | None = None, headers: dict | None = None):
+        request_headers = self.sc.schoology_auth._request_header().copy()
+        if headers:
+            request_headers.update(headers)
+
+        session = self.sc.schoology_auth.oauth
+        response = session.request(
+            method=method.upper(),
+            url=self._build_api_url(path, params=params),
+            data=data,
+            headers=request_headers,
+            auth=session.auth,
+        )
+        response.raise_for_status()
+
+        if not response.content:
+            return None
+
+        try:
+            return response.json()
+        except ValueError:
+            return response.text
+
+    def _multiget(self, request_paths: list[str]) -> list[dict]:
+        body = ["<?xml version=\"1.0\" encoding=\"utf-8\" ?>", "<requests>"]
+        for path in request_paths:
+            body.append(f"  <request>{escape(path)}</request>")
+        body.append("</requests>")
+
+        response = self._request_schoology(
+            "POST",
+            "multiget",
+            data="\n".join(body).encode("utf-8"),
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "text/xml; charset=utf-8",
+            },
+        )
+
+        if isinstance(response, list):
+            items = response
+        elif isinstance(response, dict):
+            items = None
+            for key in ("responses", "response", "results", "items"):
+                value = response.get(key)
+                if isinstance(value, list):
+                    items = value
+                    break
+                if isinstance(value, dict):
+                    items = [value]
+                    break
+            if items is None:
+                raise ValueError("Unexpected Multi-GET response envelope")
+        else:
+            raise ValueError("Multi-GET did not return JSON")
+
+        payloads: list[dict] = []
+        for item in items:
+            payload = item
+            if isinstance(item, dict):
+                status_code = self._coerce_positive_int(
+                    item.get("status")
+                    or item.get("status_code")
+                    or item.get("code")
+                )
+                if status_code is not None and status_code >= 400:
+                    raise ValueError(f"Multi-GET item returned HTTP {status_code}")
+                if "assignment" in item:
+                    payload = item
+                else:
+                    for key in ("body", "data", "result", "response", "payload"):
+                        if key not in item:
+                            continue
+                        candidate = item[key]
+                        if isinstance(candidate, dict):
+                            payload = candidate
+                            break
+                        if isinstance(candidate, str):
+                            stripped = candidate.strip()
+                            if not stripped:
+                                payload = {}
+                                break
+                            try:
+                                payload = json.loads(stripped)
+                                break
+                            except ValueError as exc:
+                                raise ValueError("Multi-GET body was not JSON") from exc
+
+            if not isinstance(payload, dict):
+                raise ValueError("Multi-GET item did not contain a JSON object payload")
+            payloads.append(payload)
+
+        return payloads
+
     def get_courses(self, sync_to_convex: bool = True) -> list[dict]:
         """
         Fetch user's courses from Schoology
@@ -131,8 +249,7 @@ class SchoologyService:
         assignment_dicts = self._fetch_section_assignments_paginated(course_id)
 
         if sync_to_convex:
-            sync_assignments(self.convex_url, course_id, assignment_dicts)
-            sync_assignment_user_state(self.convex_url, self.user_id, course_id, assignment_dicts)
+            sync_course_assignments(self.convex_url, self.user_id, str(course_id), assignment_dicts)
 
         return assignment_dicts
 
@@ -145,62 +262,151 @@ class SchoologyService:
             return None
         return parsed if parsed >= 0 else None
 
+    def _extract_assignment_page(self, payload) -> tuple[list[dict], int | None, int | None]:
+        if not isinstance(payload, dict):
+            raise ValueError("Assignments payload was not a JSON object")
+
+        raw_assignments = payload.get("assignment", [])
+        if isinstance(raw_assignments, dict):
+            raw_assignments = [raw_assignments]
+        elif raw_assignments is None:
+            raw_assignments = []
+        elif not isinstance(raw_assignments, list):
+            raise ValueError("Assignments payload contained an invalid assignment field")
+
+        total = self._coerce_positive_int(payload.get("total"))
+        count = self._coerce_positive_int(payload.get("count"))
+        return raw_assignments, total, count
+
+    def _merge_assignment_page(self, state: dict, payload) -> bool:
+        raw_assignments, total, count = self._extract_assignment_page(payload)
+        start = state["start"]
+
+        if not raw_assignments:
+            return True
+
+        page_new = 0
+        for raw in raw_assignments:
+            if not isinstance(raw, dict):
+                continue
+            assignment_id = raw.get("id") or raw.get("grade_item_id")
+            dedupe_key = str(assignment_id) if assignment_id is not None else f"fallback:{start}:{page_new}"
+            if dedupe_key in state["seen_ids"]:
+                continue
+            state["seen_ids"].add(dedupe_key)
+            state["assignments"].append(raw)
+            page_new += 1
+
+        page_size = count if count and count > 0 else len(raw_assignments)
+        next_start = start + page_size
+
+        if total is not None and next_start >= total:
+            return True
+        if next_start <= start:
+            return True
+        if page_new == 0:
+            return True
+
+        state["start"] = next_start
+        return False
+
+    def _build_assignment_fetch_state(self) -> dict:
+        return {
+            "start": 0,
+            "assignments": [],
+            "seen_ids": set(),
+            "page_count": 0,
+        }
+
     def _fetch_section_assignments_paginated(self, section_id: str | int, page_limit: int = 200) -> list[dict]:
         """
         Fetch all assignments for a section by paging Schoology's assignments endpoint.
         """
-        start = 0
-        page_count = 0
         max_pages = 500  # Safety guard against malformed pagination metadata.
-        all_assignments: list[dict] = []
-        seen_ids: set[str] = set()
+        state = self._build_assignment_fetch_state()
 
-        while page_count < max_pages:
-            payload = self.sc._get(
+        while state["page_count"] < max_pages:
+            payload = self._request_schoology(
+                "GET",
                 f"sections/{section_id}/assignments",
-                params={"start": start, "limit": page_limit},
+                params={"start": state["start"], "limit": page_limit},
             )
-            page_count += 1
-
-            raw_assignments = payload.get("assignment", []) if isinstance(payload, dict) else []
-            if isinstance(raw_assignments, dict):
-                raw_assignments = [raw_assignments]
-            if not isinstance(raw_assignments, list):
+            state["page_count"] += 1
+            if self._merge_assignment_page(state, payload):
                 break
-            if not raw_assignments:
-                break
-
-            page_new = 0
-            for raw in raw_assignments:
-                if not isinstance(raw, dict):
-                    continue
-                assignment_id = raw.get("id") or raw.get("grade_item_id")
-                dedupe_key = str(assignment_id) if assignment_id is not None else f"fallback:{start}:{page_new}"
-                if dedupe_key in seen_ids:
-                    continue
-                seen_ids.add(dedupe_key)
-                all_assignments.append(raw)
-                page_new += 1
-
-            total = self._coerce_positive_int(payload.get("total") if isinstance(payload, dict) else None)
-            count = self._coerce_positive_int(payload.get("count") if isinstance(payload, dict) else None)
-            page_size = count if count and count > 0 else len(raw_assignments)
-            next_start = start + page_size
-
-            if total is not None and next_start >= total:
-                break
-            if next_start <= start:
-                break
-            if page_new == 0:
-                break
-
-            start = next_start
 
         print(
             f"[DEBUG] Assignment pagination summary user={self.user_id} section={section_id} "
-            f"pages={page_count} total_rows={len(all_assignments)}"
+            f"pages={state['page_count']} total_rows={len(state['assignments'])}"
         )
-        return all_assignments
+        return state["assignments"]
+
+    def _fetch_assignments_for_sections(self, section_ids: list[str | int], page_limit: int = 200) -> dict[str, list[dict]]:
+        normalized_ids = [
+            str(section_id)
+            for section_id in section_ids
+            if section_id is not None and str(section_id)
+        ]
+        if not normalized_ids:
+            return {}
+
+        max_pages = 500
+        states = {
+            section_id: self._build_assignment_fetch_state()
+            for section_id in normalized_ids
+        }
+        completed: dict[str, list[dict]] = {}
+        pending = normalized_ids[:]
+
+        while pending:
+            next_pending: list[str] = []
+            for chunk in self._chunked(pending, 50):
+                request_paths = [
+                    f"/v1/sections/{section_id}/assignments?start={states[section_id]['start']}&limit={page_limit}"
+                    for section_id in chunk
+                ]
+
+                try:
+                    payloads = self._multiget(request_paths)
+                    if len(payloads) != len(chunk):
+                        raise ValueError(
+                            f"Expected {len(chunk)} Multi-GET payloads but received {len(payloads)}"
+                        )
+                except Exception as exc:
+                    print(
+                        f"[WARNING] Multi-GET failed for sections {chunk}: {exc}. "
+                        "Falling back to per-section requests."
+                    )
+                    for section_id in chunk:
+                        try:
+                            completed[section_id] = self._fetch_section_assignments_paginated(
+                                section_id,
+                                page_limit=page_limit,
+                            )
+                        except Exception as section_exc:
+                            print(
+                                f"[WARNING] Error refreshing assignments for course {section_id}: {section_exc}"
+                            )
+                            completed[section_id] = []
+                    continue
+
+                for section_id, payload in zip(chunk, payloads):
+                    state = states[section_id]
+                    state["page_count"] += 1
+                    done = self._merge_assignment_page(state, payload)
+
+                    if done or state["page_count"] >= max_pages:
+                        completed[section_id] = state["assignments"]
+                        print(
+                            f"[DEBUG] Assignment pagination summary user={self.user_id} section={section_id} "
+                            f"pages={state['page_count']} total_rows={len(state['assignments'])}"
+                        )
+                    else:
+                        next_pending.append(section_id)
+
+            pending = next_pending
+
+        return completed
 
     @staticmethod
     def _parse_due_datetime(due_raw) -> datetime | None:
@@ -258,6 +464,7 @@ class SchoologyService:
         """
         # Get all sections
         sections = self.sc.get_sections()
+        assignments_by_section = self._fetch_assignments_for_sections([section.id for section in sections])
 
         now_utc = datetime.now(timezone.utc)
         cutoff_utc = now_utc + timedelta(days=days) if days is not None else None
@@ -270,7 +477,7 @@ class SchoologyService:
         # Fetch assignments for each section
         for section in sections:
             try:
-                assignments = self._fetch_section_assignments_paginated(section.id)
+                assignments = assignments_by_section.get(str(section.id), [])
 
                 for assignment_dict in assignments:
                     total_seen += 1
@@ -324,6 +531,11 @@ class SchoologyService:
         """
         # Fetch and sync courses
         courses = self.get_courses(sync_to_convex=True)
+        assignments_by_course = self._fetch_assignments_for_sections([
+            course["id"]
+            for course in courses
+            if course.get("id") is not None
+        ])
 
         # Fetch and sync assignments for each course
         total_assignments = 0
@@ -331,7 +543,9 @@ class SchoologyService:
         now_utc = datetime.now(timezone.utc)
         for course in courses:
             try:
-                assignments = self.get_assignments(course["id"], sync_to_convex=True)
+                course_id = str(course["id"])
+                assignments = assignments_by_course.get(course_id, [])
+                sync_course_assignments(self.convex_url, self.user_id, course_id, assignments)
                 total_assignments += len(assignments)
                 for assignment in assignments:
                     due_date = self._parse_due_datetime(assignment.get("due"))
