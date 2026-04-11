@@ -1,0 +1,27 @@
+@import 'tailwindcss';
+@import 'fumadocs-ui/css/catppuccin.css';
+@import 'fumadocs-ui/css/preset.css';
+
+@theme {
+  /* --color-fd-foreground: #ff0000; */
+  /* --color-fd-background: hsl(0, 0%, 96%);
+  --color-fd-muted: hsl(0, 0%, 96.1%);
+  --color-fd-muted-foreground: hsl(0, 0%, 45.1%);
+  --color-fd-popover: hsl(0, 0%, 98%);
+  --color-fd-popover-foreground: hsl(0, 0%, 15.1%);
+  --color-fd-card: hsl(0, 0%, 94.7%);
+  --color-fd-card-foreground: hsl(0, 0%, 3.9%);
+  --color-fd-border: hsla(0, 0%, 80%, 50%);
+  --color-fd-primary: hsl(0, 0%, 9%);
+  --color-fd-primary-foreground: hsl(0, 0%, 98%);
+  --color-fd-secondary: hsl(0, 0%, 93.1%);
+  --color-fd-secondary-foreground: hsl(0, 0%, 9%);
+  --color-fd-accent: hsla(0, 0%, 82%, 50%);
+  --color-fd-accent-foreground: hsl(0, 0%, 9%);
+  --color-fd-ring: hsl(0, 0%, 63.9%); */
+}
+
+/* Smooth color transitions for navbar text when background changes */
+[data-navbar] * {
+  transition: color 200ms ease-out;
+}
