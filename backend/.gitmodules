@@ -1,3 +1,0 @@
-[submodule "schoology_service"]
-	path = schoology_service
-	url = git@github.com:Pinewood-Tech-Club/schoology-service.git
