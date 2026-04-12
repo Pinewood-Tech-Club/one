@@ -1,0 +1,51 @@
+.DS_Store
+.pytest_cache/
+.pinewood-dev
+
+# Editor state
+.vscode/
+
+# Backend
+backend/env/
+backend/.env
+backend/*.db*
+**/__pycache__/
+backend/research/
+backend/chroma_db/
+backend/testing/
+backend/keys/
+backend/cloudflared-config.yml
+
+# Frontend
+frontend/node_modules/
+frontend/.pnp
+frontend/.pnp.*
+frontend/.yarn/*
+!frontend/.yarn/patches
+!frontend/.yarn/plugins
+!frontend/.yarn/releases
+!frontend/.yarn/versions
+frontend/coverage/
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/.env*
+frontend/.gitignore
+frontend/.vercel/
+frontend/*.pem
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/.pnpm-debug.log*
+frontend/*.tsbuildinfo
+frontend/next-env.d.ts
+
+# Python package artifacts inside backend subtree
+backend/**/build/
+backend/**/dist/
+backend/**/*.egg-info/
+backend/**/.eggs/
+backend/**/.idea/
+backend/**/*.swp
+backend/**/*.swo
+backend/**/*~
