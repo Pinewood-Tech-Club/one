@@ -1,28 +1,32 @@
 import posthog from 'posthog-js';
 
-posthog.init(process.env.NEXT_PUBLIC_POSTHOG_KEY!, {
-  api_host: '/skibidi',
-  ui_host: '/skibidi',
+const posthogKey = process.env.NEXT_PUBLIC_POSTHOG_KEY;
 
-  // Keep analytics anonymous - no user identification
-  person_profiles: 'identified_only',
+if (posthogKey) {
+  posthog.init(posthogKey, {
+    api_host: '/skibidi',
+    ui_host: '/skibidi',
 
-  // Session replay with privacy masking
-  session_recording: {
-    maskAllInputs: true,
-    maskTextSelector: '[data-ph-mask]',
-  },
+    // Keep analytics anonymous - no user identification
+    person_profiles: 'identified_only',
 
-  // Error tracking - automatic capture
-  capture_exceptions: {
-    capture_unhandled_errors: true,
-    capture_unhandled_rejections: true,
-    capture_console_errors: false,
-  },
+    // Session replay with privacy masking
+    session_recording: {
+      maskAllInputs: true,
+      maskTextSelector: '[data-ph-mask]',
+    },
 
-  autocapture: true,
-  capture_pageview: true,
-  capture_pageleave: true,
-});
+    // Error tracking - automatic capture
+    capture_exceptions: {
+      capture_unhandled_errors: true,
+      capture_unhandled_rejections: true,
+      capture_console_errors: false,
+    },
+
+    autocapture: true,
+    capture_pageview: true,
+    capture_pageleave: true,
+  });
+}
 
 export { posthog };

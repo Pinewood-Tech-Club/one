@@ -37,7 +37,7 @@ export function OnboardingController({ mode = 'web' }: OnboardingControllerProps
       }
     }
     setCompletionBridgeError(null);
-    window.location.href = '/dashboard';
+    window.location.href = '/';
   }, [mode]);
 
   // Redirect to dashboard when onboarding completes
@@ -118,7 +118,7 @@ export function OnboardingController({ mode = 'web' }: OnboardingControllerProps
                 </button>
                 <button
                   onClick={() => {
-                    window.location.href = '/dashboard';
+                    window.location.href = '/';
                   }}
                   className="px-7 py-3 bg-white/20 text-white rounded-full font-semibold text-base border border-white/35 hover:bg-white/30 transition-all duration-200 cursor-pointer"
                 >

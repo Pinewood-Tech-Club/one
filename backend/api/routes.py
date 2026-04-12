@@ -9,7 +9,7 @@ from flask import Blueprint, Response, jsonify, request, stream_with_context
 from config import Config
 from auth.middleware import auth_required
 from onboarding import get_user as convex_get_user, update_onboarding_step, save_consent
-from services.chat import convex_sync, live_stream
+from services.chat import live_stream
 
 TERMINAL_CHAT_STATUSES = {"completed", "failed", "cancelled"}
 
@@ -154,23 +154,9 @@ def stream_chat_generation_events(generation_id, user):
         return jsonify({"error": "chat_not_configured"}), 503
 
     last_event_id = request.headers.get("Last-Event-ID", "").strip()
-
-    # Check Redis first — avoids a Convex round-trip for active generations
     snapshot = live_stream.get_live_state(generation_id)
-
-    # Only hit Convex if Redis has no live state (generation already terminal or not found)
-    context = None
-    if not snapshot:
-        context = convex_sync.get_generation_context(generation_id)
-        if not isinstance(context, dict):
-            return jsonify({"error": "generation_not_found"}), 404
-        generation = context.get("generation") or {}
-        if generation.get("userId") != str(user["id"]):
-            return jsonify({"error": "generation_not_found"}), 404
-    else:
-        # Auth-check from snapshot userId (set during initialize_live_state)
-        if snapshot.get("userId") and snapshot.get("userId") != str(user["id"]):
-            return jsonify({"error": "generation_not_found"}), 404
+    if snapshot and snapshot.get("userId") and snapshot.get("userId") != str(user["id"]):
+        return jsonify({"error": "generation_not_found"}), 404
 
     @stream_with_context
     def generate():
@@ -185,11 +171,6 @@ def stream_chat_generation_events(generation_id, user):
                 for event in live_stream.replay_events_after(generation_id, last_event_id):
                     current_event_id = event["id"]
                     yield _format_sse(event["type"], event, event_id=event["id"])
-        else:
-            terminal_payload = _terminal_payload_from_context(context)
-            if terminal_payload:
-                yield _format_sse("terminal", terminal_payload)
-                return
 
         while True:
             events = live_stream.block_for_new_events(
@@ -198,13 +179,6 @@ def stream_chat_generation_events(generation_id, user):
                 block_ms=Config.CHAT_SSE_HEARTBEAT_SECONDS * 1000,
             )
             if not events:
-                refreshed_snapshot = live_stream.get_live_state(generation_id)
-                if refreshed_snapshot is None:
-                    refreshed_context = convex_sync.get_generation_context(generation_id)
-                    terminal_payload = _terminal_payload_from_context(refreshed_context)
-                    if terminal_payload:
-                        yield _format_sse("terminal", terminal_payload)
-                        return
                 yield ": heartbeat\n\n"
                 continue
 
@@ -219,31 +193,6 @@ def stream_chat_generation_events(generation_id, user):
     response.headers["Connection"] = "keep-alive"
     response.headers["X-Accel-Buffering"] = "no"
     return response
-
-
-def _terminal_payload_from_context(context):
-    if not isinstance(context, dict):
-        return None
-
-    generation = context.get("generation")
-    assistant_message = context.get("assistantMessage")
-    if not isinstance(generation, dict):
-        return None
-
-    status = generation.get("status")
-    if status not in TERMINAL_CHAT_STATUSES:
-        return None
-
-    return {
-        "generationId": generation.get("_id"),
-        "status": status,
-        "content": assistant_message.get("content", "") if isinstance(assistant_message, dict) else "",
-        "updatedAt": generation.get("updatedAt"),
-        "providerMessageId": generation.get("providerMessageId"),
-        "usage": generation.get("usage"),
-        "errorCode": generation.get("errorCode"),
-        "errorMessage": generation.get("errorMessage"),
-    }
 
 
 def _format_sse(event_name: str, payload, *, event_id: str | None = None):

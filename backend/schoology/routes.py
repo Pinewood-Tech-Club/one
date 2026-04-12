@@ -335,26 +335,26 @@ def schoology_upcoming(user):
 @auth_required
 def schoology_refresh(user):
     """Refresh all Schoology data and update Convex cache."""
-    payload, status_code = refresh_schoology_cache_for_user(user["id"])
+    payload, status_code = start_schoology_refresh_for_user(user["id"])
     return jsonify(payload), status_code
 
 
-def refresh_schoology_cache_for_user(user_id: int) -> tuple[dict, int]:
-    """Shared refresh flow used by both web-session and mobile-token routes."""
-
-    # Check if a refresh is already in progress for this user
+def _mark_refresh_started(user_id: int) -> bool:
     with _refresh_lock:
         if user_id in _active_refreshes:
-            print(f"[DEBUG] Refresh already in progress for user_id: {user_id}, returning success")
-            return {
-                "success": True,
-                "alreadyInProgress": True,
-                "message": "Refresh already in progress"
-            }, 200
-
-        # Mark this user as actively refreshing
+            return False
         _active_refreshes.add(user_id)
-        print(f"[DEBUG] Starting refresh for user_id: {user_id}")
+        return True
+
+
+def _mark_refresh_completed(user_id: int) -> None:
+    with _refresh_lock:
+        _active_refreshes.discard(user_id)
+        print(f"[DEBUG] Completed refresh for user_id: {user_id}")
+
+
+def _run_refresh_for_user(user_id: int) -> None:
+    print(f"[DEBUG] Starting refresh for user_id: {user_id}")
 
     try:
         print(f"[DEBUG] /api/schoology/refresh called for user_id: {user_id}")
@@ -362,31 +362,48 @@ def refresh_schoology_cache_for_user(user_id: int) -> tuple[dict, int]:
         service = _create_service(user_id)
         if not service:
             print(f"[DEBUG] Failed to create Schoology service for user_id: {user_id}")
-            return {"error": "Schoology account not connected"}, 400
+            return
 
         print(f"[DEBUG] Refreshing all Schoology data...")
         result = service.refresh_all()  # Fetches courses + assignments and syncs to Convex
         print(f"[DEBUG] Refresh result: {result}")
 
-        return {
-            "success": True,
-            "coursesUpdated": result.get("courses_updated", 0),
-            "assignmentsUpdated": result.get("assignments_updated", 0),
-            "upcomingUpdated": result.get("upcoming_updated", 0),
-            "message": "Cache updated successfully"
-        }, 200
-
     except Exception as e:
         print(f"[ERROR] Schoology refresh error: {str(e)}")
         import traceback
         traceback.print_exc()
-        return {"error": str(e)}, 500
 
     finally:
-        # Always remove the user from active refreshes when done
-        with _refresh_lock:
-            _active_refreshes.discard(user_id)
-            print(f"[DEBUG] Completed refresh for user_id: {user_id}")
+        _mark_refresh_completed(user_id)
+
+
+def start_schoology_refresh_for_user(user_id: int) -> tuple[dict, int]:
+    """Start a background refresh if one is not already running."""
+    service = _create_service(user_id)
+    if not service:
+        print(f"[DEBUG] Failed to create Schoology service for user_id: {user_id}")
+        return {"error": "Schoology account not connected"}, 400
+
+    if not _mark_refresh_started(user_id):
+        print(f"[DEBUG] Refresh already in progress for user_id: {user_id}, returning success")
+        return {
+            "success": True,
+            "alreadyInProgress": True,
+            "message": "Refresh already in progress",
+        }, 200
+
+    threading.Thread(
+        target=_run_refresh_for_user,
+        args=(user_id,),
+        daemon=True,
+        name=f"schoology-refresh-{user_id}",
+    ).start()
+
+    return {
+        "success": True,
+        "refreshStarted": True,
+        "message": "Refresh started",
+    }, 202
 
 
 @schoology_api_bp.route("/disconnect", methods=["POST"])

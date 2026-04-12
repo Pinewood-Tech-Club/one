@@ -10,6 +10,7 @@
 
 import type * as auth from "../auth.js";
 import type * as chat from "../chat.js";
+import type * as chatBridge from "../chatBridge.js";
 import type * as chatInternal from "../chatInternal.js";
 import type * as chatModel from "../chatModel.js";
 import type * as crons from "../crons.js";
@@ -26,6 +27,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   auth: typeof auth;
   chat: typeof chat;
+  chatBridge: typeof chatBridge;
   chatInternal: typeof chatInternal;
   chatModel: typeof chatModel;
   crons: typeof crons;

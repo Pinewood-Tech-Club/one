@@ -64,6 +64,7 @@ def run_generation(generation_id: str) -> GenerationRunResult:
     first_token_seen = False
     last_text_at = context.started_at or context.updated_at or _now_ms()
     last_activity = "thinking"
+    cancel_flag = threading.Event()
 
     logger.info(
         "chat_generation_start generation_id=%s thread_id=%s user_id=%s provider=%s model=%s status=%s",
@@ -162,7 +163,6 @@ def run_generation(generation_id: str) -> GenerationRunResult:
     )
 
     heartbeat_stop = threading.Event()
-    cancel_flag = threading.Event()  # set by worker thread when Convex reports cancel requested
 
     # Single background worker for all async I/O tasks (delta writes + heartbeats).
     # Keeps thread count fixed at 2 per generation regardless of traffic.
@@ -363,8 +363,6 @@ def run_generation(generation_id: str) -> GenerationRunResult:
 
 
 def _validate_chat_configuration():
-    if not Config.CONVEX_ADMIN_KEY:
-        raise ChatConfigurationError("CONVEX_ADMIN_KEY is not configured")
     if not Config.CHAT_INTERNAL_SECRET:
         raise ChatConfigurationError("CHAT_INTERNAL_SECRET is not configured")
     if not Config.LLM_API_KEY:

@@ -34,7 +34,6 @@ REQUIRED_BACKEND_ENV = (
 )
 
 OPTIONAL_BACKEND_ENV = (
-    "CONVEX_ADMIN_KEY",
     "LLM_API_KEY",
     "LLM_MODEL",
     "CHAT_INTERNAL_SECRET",
@@ -79,7 +78,6 @@ SECRET_PROMPTS = {
     "GOOGLE_CLIENT_SECRET": "Paste the shared Google OAuth client secret.",
     "SCHOOLOGY_CONSUMER_KEY": "Paste the shared Schoology consumer key.",
     "SCHOOLOGY_CONSUMER_SECRET": "Paste the shared Schoology consumer secret.",
-    "CONVEX_ADMIN_KEY": "Paste the shared Convex admin key for backend chat sync.",
     "LLM_API_KEY": "Paste the shared LLM API key.",
     "LLM_MODEL": "Paste the model identifier to use for chat, for example Claude Haiku 4.5.",
     "UPSTASH_REDIS_URL": "Paste the shared Redis URL used for live chat streaming.",
@@ -156,6 +154,54 @@ def run_command(
         check=check,
         text=True,
     )
+
+
+def get_listening_process_cwds(port: int) -> list[str]:
+    try:
+        listeners = subprocess.run(
+            ["lsof", "-Fp", "-a", f"-iTCP:{port}", "-sTCP:LISTEN"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return []
+
+    pids: list[str] = []
+    for raw_line in listeners.stdout.splitlines():
+        if raw_line.startswith("p") and len(raw_line) > 1:
+            pids.append(raw_line[1:])
+
+    cwds: list[str] = []
+    for pid in pids:
+        try:
+            details = subprocess.run(
+                ["lsof", "-a", "-p", pid, "-d", "cwd", "-Fn"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError:
+            continue
+        for raw_line in details.stdout.splitlines():
+            if raw_line.startswith("n") and len(raw_line) > 1:
+                cwds.append(raw_line[1:])
+    return cwds
+
+
+def check_expected_listener(port: int, expected_cwd: Path, label: str) -> list[DoctorIssue]:
+    issues: list[DoctorIssue] = []
+    expected = str(expected_cwd.resolve())
+    for cwd in sorted(set(get_listening_process_cwds(port))):
+        normalized = str(Path(cwd).resolve())
+        if normalized != expected:
+            issues.append(
+                DoctorIssue(
+                    "ERROR",
+                    f"Port {port} is already owned by {normalized}, not the monorepo {label} at {expected}. Stop the old process before running make dev.",
+                )
+            )
+    return issues
 
 
 def ensure_tools(required: Iterable[str]) -> list[DoctorIssue]:
@@ -272,7 +318,6 @@ def build_backend_updates(options: dict[str, bool], secrets_map: dict[str, str])
 
     if options["chat"]:
         updates["CHAT_INTERNAL_SECRET"] = secrets_map.get("CHAT_INTERNAL_SECRET") or create_chat_secret()
-        updates["CONVEX_ADMIN_KEY"] = secrets_map["CONVEX_ADMIN_KEY"]
         updates["LLM_API_KEY"] = secrets_map["LLM_API_KEY"]
         updates["LLM_MODEL"] = secrets_map["LLM_MODEL"]
         updates["UPSTASH_REDIS_URL"] = secrets_map["UPSTASH_REDIS_URL"]
@@ -362,6 +407,7 @@ def doctor(component: str) -> list[DoctorIssue]:
     dev_config = load_dev_config()
     if component in {"full", "backend"}:
         issues.extend(ensure_tools(("python3",)))
+        issues.extend(check_expected_listener(3111, BACKEND_DIR, "backend"))
         if not BACKEND_PYTHON.exists():
             issues.append(DoctorIssue("ERROR", "Backend virtualenv is missing. Run make init or make setup."))
         if not BACKEND_ENV_FILE.exists():
@@ -372,6 +418,7 @@ def doctor(component: str) -> list[DoctorIssue]:
     if component in {"full", "frontend", "convex"}:
         needed = ("node", "pnpm")
         issues.extend(ensure_tools(needed))
+        issues.extend(check_expected_listener(3112, FRONTEND_DIR, "frontend"))
         if not (FRONTEND_DIR / "node_modules").exists():
             issues.append(DoctorIssue("ERROR", "frontend/node_modules is missing. Run make init or make setup."))
         if not FRONTEND_ENV_FILE.exists():
@@ -691,7 +738,6 @@ def cmd_setup(_args: argparse.Namespace) -> int:
     if options["chat"]:
         required_keys.extend(
             [
-                "CONVEX_ADMIN_KEY",
                 "LLM_API_KEY",
                 "LLM_MODEL",
                 "UPSTASH_REDIS_URL",

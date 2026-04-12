@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useQuery, useMutation } from 'convex/react';
 import { api } from '../../../../convex/_generated/api';
 import type { Id } from '../../../../convex/_generated/dataModel';
+import { useConvexAuthReady } from '@/components/ConvexClientProvider';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -215,14 +216,15 @@ export default function ChatPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const threads = useQuery(api.chat.listThreads);
+  const authReady = useConvexAuthReady();
+  const threads = useQuery(api.chat.listThreads, authReady ? {} : 'skip');
   const messages = useQuery(
     api.chat.listMessages,
-    selectedThreadId ? { threadId: selectedThreadId } : 'skip',
+    authReady && selectedThreadId ? { threadId: selectedThreadId } : 'skip',
   );
   const activeGeneration = useQuery(
     api.chat.getActiveGeneration,
-    selectedThreadId ? { threadId: selectedThreadId } : 'skip',
+    authReady && selectedThreadId ? { threadId: selectedThreadId } : 'skip',
   );
 
   const sendMessageMutation = useMutation(api.chat.sendMessage);

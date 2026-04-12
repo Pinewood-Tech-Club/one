@@ -58,4 +58,10 @@ def create_app():
 
 if __name__ == "__main__":
     app = create_app()
-    app.run(debug=True, port=3111, host="0.0.0.0")
+    app.run(
+        debug=True,
+        threaded=True,
+        use_reloader=False,
+        port=3111,
+        host="0.0.0.0",
+    )

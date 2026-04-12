@@ -10,7 +10,7 @@ from db.sessions import create_session
 from extensions import limiter
 from mobile import service
 from onboarding import get_user as convex_get_user
-from schoology.routes import refresh_schoology_cache_for_user
+from schoology.routes import start_schoology_refresh_for_user
 
 mobile_bp = Blueprint("mobile_api", __name__, url_prefix="/api/mobile/v1")
 
@@ -353,5 +353,5 @@ def mobile_banner_upcoming():
 @mobile_auth_required
 @limiter.limit("10 per minute", key_func=_limit_by_mobile_user)
 def mobile_schoology_refresh(user, token_payload):
-    payload, status_code = refresh_schoology_cache_for_user(user["id"])
+    payload, status_code = start_schoology_refresh_for_user(user["id"])
     return jsonify(payload), status_code
