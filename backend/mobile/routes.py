@@ -8,9 +8,9 @@ from auth.mobile_middleware import mobile_auth_required
 from config import Config
 from db.sessions import create_session
 from extensions import limiter
-from mobile import service
+from services.mobile import service
 from onboarding import get_user as convex_get_user
-from schoology.routes import start_schoology_refresh_for_user
+from services.schoology.refresh import start_schoology_refresh_for_user
 
 mobile_bp = Blueprint("mobile_api", __name__, url_prefix="/api/mobile/v1")
 

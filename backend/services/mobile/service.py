@@ -25,7 +25,7 @@ from onboarding import (
     update_onboarding_step,
     update_schoology_connected,
 )
-from schoology_service import complete_oauth, start_oauth
+from services.schoology import complete_oauth, start_oauth
 
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"

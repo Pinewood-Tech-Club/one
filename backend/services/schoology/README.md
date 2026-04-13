@@ -20,7 +20,7 @@ pip install -r requirements.txt
 ### OAuth Flow
 
 ```python
-from schoology_service import start_oauth, complete_oauth
+from services.schoology import start_oauth, complete_oauth
 
 # Step 1: Start OAuth flow
 auth_url, request_token, request_token_secret = start_oauth(
@@ -45,7 +45,7 @@ access_token, access_token_secret = complete_oauth(
 ### Using the Schoology Service
 
 ```python
-from schoology_service import SchoologyService
+from services.schoology import SchoologyService
 
 # Initialize the service
 service = SchoologyService(

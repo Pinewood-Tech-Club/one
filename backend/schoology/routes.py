@@ -1,12 +1,14 @@
 """
-Schoology API routes (using schoology_service package)
+Schoology API routes.
 """
 from flask import Blueprint, jsonify, redirect, request
 from config import Config
 from auth.middleware import auth_required
-from schoology_service import SchoologyService, start_oauth, complete_oauth
+from services.schoology import start_oauth, complete_oauth
+from services.schoology.convex_sync import sync_profile_picture
+from services.schoology.refresh import start_schoology_refresh_for_user
+from services.schoology.runtime import create_schoology_service
 from db.tokens import (
-    get_schoology_tokens,
     save_schoology_credentials,
     save_schoology_request_tokens,
     save_schoology_access_tokens,
@@ -15,71 +17,12 @@ from db.tokens import (
 )
 from db.encryption import decrypt_token
 from onboarding import update_schoology_connected, update_onboarding_step
-from schoology_service.convex_sync import sync_profile_picture
-import threading
 
 # Blueprint for /oauth/schoology/* routes
 oauth_bp = Blueprint('schoology_oauth', __name__, url_prefix='/oauth/schoology')
 
 # Blueprint for /api/schoology/* routes
 schoology_api_bp = Blueprint('schoology_api', __name__, url_prefix='/api/schoology')
-
-# Refresh lock mechanism to prevent concurrent refreshes per user
-_refresh_lock = threading.Lock()
-_active_refreshes = set()  # Set of user_ids currently refreshing
-
-
-def _create_service(user_id: int) -> SchoologyService | None:
-    """
-    Create a SchoologyService instance for the given user
-
-    Args:
-        user_id: User ID
-
-    Returns:
-        SchoologyService instance or None if tokens not found
-    """
-    tokens = get_schoology_tokens(user_id)
-    if not tokens:
-        return None
-
-    access_token = decrypt_token(tokens.get("access_token"))
-    access_token_secret = decrypt_token(tokens.get("access_token_secret"))
-
-    if access_token and access_token_secret:
-        # Three-legged tokens are issued using the backend's configured consumer key/secret,
-        # so always sign with those (avoid mismatches with any previously-saved override creds).
-        if not Config.SCHOOLOGY_CONSUMER_KEY or not Config.SCHOOLOGY_CONSUMER_SECRET:
-            return None
-        return SchoologyService(
-            user_id=str(user_id),
-            access_token=access_token,
-            access_token_secret=access_token_secret,
-            consumer_key=Config.SCHOOLOGY_CONSUMER_KEY,
-            consumer_secret=Config.SCHOOLOGY_CONSUMER_SECRET,
-            convex_url=Config.CONVEX_URL,
-            schoology_domain=Config.SCHOOLOGY_DOMAIN,
-            schoology_api_domain=Config.SCHOOLOGY_API_DOMAIN,
-        )
-
-    # Prefer per-user credentials if present; fall back to server config (if set).
-    consumer_key = decrypt_token(tokens.get("consumer_key")) or Config.SCHOOLOGY_CONSUMER_KEY
-    consumer_secret = decrypt_token(tokens.get("consumer_secret")) or Config.SCHOOLOGY_CONSUMER_SECRET
-
-    # Two-legged (consumer credentials only)
-    if consumer_key and consumer_secret:
-        return SchoologyService(
-            user_id=str(user_id),
-            access_token=None,
-            access_token_secret=None,
-            consumer_key=consumer_key,
-            consumer_secret=consumer_secret,
-            convex_url=Config.CONVEX_URL,
-            schoology_domain=Config.SCHOOLOGY_DOMAIN,
-            schoology_api_domain=Config.SCHOOLOGY_API_DOMAIN,
-        )
-
-    return None
 
 
 @schoology_api_bp.route("/developer-override", methods=["POST"])
@@ -100,7 +43,7 @@ def schoology_developer_override(user):
     try:
         row_id = save_schoology_credentials(user["id"], client_id, client_secret)
 
-        service = _create_service(user["id"])
+        service = create_schoology_service(user["id"])
         if not service:
             raise Exception("Failed to create Schoology service")
 
@@ -232,7 +175,7 @@ def schoology_oauth_callback():
 
         # Fetch and cache profile picture
         try:
-            service = _create_service(user_id)
+            service = create_schoology_service(user_id)
             if service:
                 schoology_user = service.get_user_info()
                 if schoology_user.get("picture_url"):
@@ -256,7 +199,7 @@ def schoology_oauth_callback():
 def schoology_status(user):
     """Check if user has connected their Schoology account"""
     try:
-        service = _create_service(user["id"])
+        service = create_schoology_service(user["id"])
         if not service:
             return jsonify({"connected": False})
 
@@ -286,7 +229,7 @@ def schoology_courses(user):
     try:
         print(f"[DEBUG] /api/schoology/courses called for user_id: {user['id']}")
 
-        service = _create_service(user["id"])
+        service = create_schoology_service(user["id"])
         if not service:
             print(f"[DEBUG] Failed to create Schoology service for user_id: {user['id']}")
             return jsonify({"error": "Schoology account not connected"}), 400
@@ -311,7 +254,7 @@ def schoology_upcoming(user):
     try:
         print(f"[DEBUG] /api/schoology/upcoming called for user_id: {user['id']}")
 
-        service = _create_service(user["id"])
+        service = create_schoology_service(user["id"])
         if not service:
             print(f"[DEBUG] Failed to create Schoology service for user_id: {user['id']}")
             return jsonify({"error": "Schoology account not connected"}), 400
@@ -338,81 +281,13 @@ def schoology_refresh(user):
     payload, status_code = start_schoology_refresh_for_user(user["id"])
     return jsonify(payload), status_code
 
-
-def _mark_refresh_started(user_id: int) -> bool:
-    with _refresh_lock:
-        if user_id in _active_refreshes:
-            return False
-        _active_refreshes.add(user_id)
-        return True
-
-
-def _mark_refresh_completed(user_id: int) -> None:
-    with _refresh_lock:
-        _active_refreshes.discard(user_id)
-        print(f"[DEBUG] Completed refresh for user_id: {user_id}")
-
-
-def _run_refresh_for_user(user_id: int) -> None:
-    print(f"[DEBUG] Starting refresh for user_id: {user_id}")
-
-    try:
-        print(f"[DEBUG] /api/schoology/refresh called for user_id: {user_id}")
-
-        service = _create_service(user_id)
-        if not service:
-            print(f"[DEBUG] Failed to create Schoology service for user_id: {user_id}")
-            return
-
-        print(f"[DEBUG] Refreshing all Schoology data...")
-        result = service.refresh_all()  # Fetches courses + assignments and syncs to Convex
-        print(f"[DEBUG] Refresh result: {result}")
-
-    except Exception as e:
-        print(f"[ERROR] Schoology refresh error: {str(e)}")
-        import traceback
-        traceback.print_exc()
-
-    finally:
-        _mark_refresh_completed(user_id)
-
-
-def start_schoology_refresh_for_user(user_id: int) -> tuple[dict, int]:
-    """Start a background refresh if one is not already running."""
-    service = _create_service(user_id)
-    if not service:
-        print(f"[DEBUG] Failed to create Schoology service for user_id: {user_id}")
-        return {"error": "Schoology account not connected"}, 400
-
-    if not _mark_refresh_started(user_id):
-        print(f"[DEBUG] Refresh already in progress for user_id: {user_id}, returning success")
-        return {
-            "success": True,
-            "alreadyInProgress": True,
-            "message": "Refresh already in progress",
-        }, 200
-
-    threading.Thread(
-        target=_run_refresh_for_user,
-        args=(user_id,),
-        daemon=True,
-        name=f"schoology-refresh-{user_id}",
-    ).start()
-
-    return {
-        "success": True,
-        "refreshStarted": True,
-        "message": "Refresh started",
-    }, 202
-
-
 @schoology_api_bp.route("/disconnect", methods=["POST"])
 @auth_required
 def schoology_disconnect(user):
     """Disconnect Schoology account"""
     try:
         # Create service to clear cache
-        service = _create_service(user["id"])
+        service = create_schoology_service(user["id"])
         if service:
             service.disconnect()  # Clear Convex cache
 
