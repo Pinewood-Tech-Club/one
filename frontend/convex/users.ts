@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { query, mutation } from "./_generated/server";
+import { query, internalMutation, internalQuery } from "./_generated/server";
 import { getOptionalAuthenticatedUser } from "./auth";
 
 // ============================================================================
@@ -31,7 +31,7 @@ export const getUser = query({
  * Get user by userId (for backend queries)
  * Used when backend needs to check user state
  */
-export const getUserByUserId = query({
+export const getUserByUserId = internalQuery({
   args: {
     userId: v.string(),
   },
@@ -44,15 +44,15 @@ export const getUserByUserId = query({
 });
 
 // ============================================================================
-// MUTATIONS - Backend updates user data
-// These are called by the trusted backend after user authentication
+// INTERNAL MUTATIONS - Backend bridge updates user data
+// These are not client-callable.
 // ============================================================================
 
 /**
  * Get or create user record
  * Called by backend after Google OAuth login
  */
-export const getOrCreate = mutation({
+export const getOrCreate = internalMutation({
   args: {
     userId: v.string(),
   },
@@ -83,7 +83,7 @@ export const getOrCreate = mutation({
  * Update onboarding step
  * Called by backend at various onboarding transitions
  */
-export const updateOnboardingStep = mutation({
+export const updateOnboardingStep = internalMutation({
   args: {
     userId: v.string(),
     step: v.union(
@@ -116,7 +116,7 @@ export const updateOnboardingStep = mutation({
  * Update Schoology connection status
  * Called by backend after successful Schoology OAuth
  */
-export const updateSchoologyConnected = mutation({
+export const updateSchoologyConnected = internalMutation({
   args: {
     userId: v.string(),
     connected: v.boolean(),
@@ -144,7 +144,7 @@ export const updateSchoologyConnected = mutation({
  * Update user's Schoology profile picture URL
  * Called by backend after fetching user info from Schoology
  */
-export const updateProfilePicture = mutation({
+export const updateProfilePicture = internalMutation({
   args: {
     userId: v.string(),
     pictureUrl: v.string(),
@@ -172,7 +172,7 @@ export const updateProfilePicture = mutation({
  * Save smart features consent and complete onboarding
  * Called by backend when user submits consent form
  */
-export const saveConsent = mutation({
+export const saveConsent = internalMutation({
   args: {
     userId: v.string(),
     consent: v.object({

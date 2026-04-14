@@ -9,6 +9,7 @@
  */
 
 import type * as auth from "../auth.js";
+import type * as backendBridge from "../backendBridge.js";
 import type * as chat from "../chat.js";
 import type * as chatBridge from "../chatBridge.js";
 import type * as chatInternal from "../chatInternal.js";
@@ -26,6 +27,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   auth: typeof auth;
+  backendBridge: typeof backendBridge;
   chat: typeof chat;
   chatBridge: typeof chatBridge;
   chatInternal: typeof chatInternal;

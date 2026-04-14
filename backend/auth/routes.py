@@ -1,7 +1,9 @@
 """
 Authentication routes
 """
+import hmac
 import logging
+import secrets
 import threading
 from flask import Blueprint, redirect, request, session, jsonify
 from config import Config
@@ -34,7 +36,9 @@ def _bootstrap_convex_user_async(user_id: int):
 @auth_bp.route("/google")
 def auth_google():
     """Initiate Google OAuth flow"""
-    google_auth_url = get_google_auth_url()
+    state = secrets.token_urlsafe(32)
+    session["google_oauth_state"] = state
+    google_auth_url = get_google_auth_url(state=state)
     return redirect(google_auth_url)
 
 
@@ -44,6 +48,11 @@ def auth_google_callback():
     logger.debug("Google OAuth callback hit")
     logger.debug(f"Request args: {request.args}")
     try:
+        returned_state = request.args.get("state", "")
+        expected_state = session.pop("google_oauth_state", None)
+        if not expected_state or not hmac.compare_digest(returned_state, expected_state):
+            return redirect(f"{Config.FRONTEND_URL}?error=invalid_state")
+
         code = request.args.get("code")
         if not code:
             return redirect(f"{Config.FRONTEND_URL}?error=no_code")

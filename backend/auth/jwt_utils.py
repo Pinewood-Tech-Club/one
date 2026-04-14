@@ -5,6 +5,7 @@ import os
 import base64
 import secrets
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import jwt
 from cryptography.hazmat.backends import default_backend
@@ -20,56 +21,71 @@ JWT_KEY_ID = "pinewood-one-key-1"
 JWT_CONVEX_AUDIENCE = "convex"
 JWT_MOBILE_AUDIENCE = "mobile_api"
 JWT_DEFAULT_CONVEX_EXPIRATION_HOURS = 24
+JWT_PRIVATE_KEY_PEM = os.environ.get("JWT_PRIVATE_KEY_PEM")
+JWT_PUBLIC_KEY_PEM = os.environ.get("JWT_PUBLIC_KEY_PEM")
 
 # RSA key paths
-PRIVATE_KEY_PATH = os.path.join(os.path.dirname(__file__), "..", "keys", "private.pem")
-PUBLIC_KEY_PATH = os.path.join(os.path.dirname(__file__), "..", "keys", "public.pem")
+KEYS_DIR = Path(__file__).resolve().parents[1] / "keys"
+PRIVATE_KEY_PATH = KEYS_DIR / "private.pem"
+PUBLIC_KEY_PATH = KEYS_DIR / "public.pem"
+
+
+def _load_env_key_pair() -> tuple[bytes, bytes] | None:
+    if not JWT_PRIVATE_KEY_PEM and not JWT_PUBLIC_KEY_PEM:
+        return None
+    if not JWT_PRIVATE_KEY_PEM or not JWT_PUBLIC_KEY_PEM:
+        raise RuntimeError(
+            "JWT_PRIVATE_KEY_PEM and JWT_PUBLIC_KEY_PEM must both be set together"
+        )
+    return JWT_PRIVATE_KEY_PEM.encode("utf-8"), JWT_PUBLIC_KEY_PEM.encode("utf-8")
 
 
 def _ensure_keys_exist():
-    """Generate RSA keys if they don't exist."""
-    keys_dir = os.path.dirname(PRIVATE_KEY_PATH)
-    if not os.path.exists(keys_dir):
-        os.makedirs(keys_dir)
+    """Ensure JWT signing keys are available via env or stable local files."""
+    env_keys = _load_env_key_pair()
+    if env_keys:
+        return env_keys
 
-    if not os.path.exists(PRIVATE_KEY_PATH) or not os.path.exists(PUBLIC_KEY_PATH):
-        private_key = rsa.generate_private_key(
-            public_exponent=65537,
-            key_size=2048,
-            backend=default_backend(),
+    if PRIVATE_KEY_PATH.exists() and PUBLIC_KEY_PATH.exists():
+        return PRIVATE_KEY_PATH.read_bytes(), PUBLIC_KEY_PATH.read_bytes()
+
+    if Config.is_production():
+        raise RuntimeError(
+            "JWT signing keys are required in production. "
+            "Set JWT_PRIVATE_KEY_PEM/JWT_PUBLIC_KEY_PEM or provision backend/keys/private.pem and public.pem."
         )
-        public_key = private_key.public_key()
 
-        with open(PRIVATE_KEY_PATH, "wb") as f:
-            f.write(
-                private_key.private_bytes(
-                    encoding=serialization.Encoding.PEM,
-                    format=serialization.PrivateFormat.PKCS8,
-                    encryption_algorithm=serialization.NoEncryption(),
-                )
-            )
+    KEYS_DIR.mkdir(parents=True, exist_ok=True)
+    private_key = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=2048,
+        backend=default_backend(),
+    )
+    public_key = private_key.public_key()
 
-        with open(PUBLIC_KEY_PATH, "wb") as f:
-            f.write(
-                public_key.public_bytes(
-                    encoding=serialization.Encoding.PEM,
-                    format=serialization.PublicFormat.SubjectPublicKeyInfo,
-                )
-            )
+    private_bytes = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    public_bytes = public_key.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
 
-        print("Generated new RSA key pair for JWT signing")
+    PRIVATE_KEY_PATH.write_bytes(private_bytes)
+    PUBLIC_KEY_PATH.write_bytes(public_bytes)
+    return private_bytes, public_bytes
 
 
 def _load_private_key():
-    _ensure_keys_exist()
-    with open(PRIVATE_KEY_PATH, "rb") as f:
-        return serialization.load_pem_private_key(f.read(), password=None)
+    private_bytes, _ = _ensure_keys_exist()
+    return serialization.load_pem_private_key(private_bytes, password=None)
 
 
 def _load_public_key():
-    _ensure_keys_exist()
-    with open(PUBLIC_KEY_PATH, "rb") as f:
-        return serialization.load_pem_public_key(f.read())
+    _, public_bytes = _ensure_keys_exist()
+    return serialization.load_pem_public_key(public_bytes)
 
 
 def _int_to_base64url(n: int) -> str:

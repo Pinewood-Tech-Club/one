@@ -55,19 +55,19 @@ def _execute_google_call(operation: str, callback, fallback_error: str):
     return {"error": fallback_error}
 
 
-def get_google_auth_url():
+def get_google_auth_url(state: str | None = None):
     """Generate Google OAuth authorization URL"""
     redirect_uri = f"{Config.BACKEND_URL}/auth/google/callback"
-    # print(redirect_uri)
-    google_auth_url = "https://accounts.google.com/o/oauth2/auth?" + urlencode(
-        {
-            "client_id": Config.GOOGLE_CLIENT_ID,
-            "redirect_uri": redirect_uri,
-            "response_type": "code",
-            "scope": "email profile",
-            "hd": "pinewood.edu",
-        }
-    )
+    params = {
+        "client_id": Config.GOOGLE_CLIENT_ID,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": "email profile",
+        "hd": "pinewood.edu",
+    }
+    if state:
+        params["state"] = state
+    google_auth_url = "https://accounts.google.com/o/oauth2/auth?" + urlencode(params)
     return google_auth_url
 
 

@@ -1,31 +1,34 @@
-PYTHON ?= python3
+DEVTOOLS := /bin/bash scripts/run-devtools.sh
 
-.PHONY: setup init doctor dev dev-frontend dev-backend dev-convex dev-tunnel
+.PHONY: setup init doctor secret-export dev dev-frontend dev-backend dev-convex dev-tunnel
 
 setup:
-	$(PYTHON) scripts/devtools.py setup
+	$(DEVTOOLS) setup
 
 init:
-	$(PYTHON) scripts/devtools.py init
+	$(DEVTOOLS) init
 
 doctor:
-	$(PYTHON) scripts/devtools.py doctor
+	$(DEVTOOLS) doctor
+
+secret-export:
+	$(DEVTOOLS) secret-export
 
 dev: doctor
 	./scripts/dev.sh
 
 dev-frontend:
-	$(PYTHON) scripts/devtools.py doctor --component frontend
+	$(DEVTOOLS) doctor --component frontend
 	cd frontend && pnpm run dev
 
 dev-backend:
-	$(PYTHON) scripts/devtools.py doctor --component backend
+	$(DEVTOOLS) doctor --component backend
 	cd backend && ./env/bin/python app.py
 
 dev-convex:
-	$(PYTHON) scripts/devtools.py doctor --component convex
-	$(PYTHON) scripts/devtools.py print-convex-command | /bin/sh
+	$(DEVTOOLS) doctor --component convex
+	$(DEVTOOLS) print-convex-command | /bin/sh
 
 dev-tunnel:
-	$(PYTHON) scripts/devtools.py doctor --component backend
+	$(DEVTOOLS) doctor --component backend
 	cd backend && cloudflared tunnel --config cloudflared-config.yml run

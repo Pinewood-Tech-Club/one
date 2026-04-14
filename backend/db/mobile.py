@@ -49,7 +49,6 @@ def insert_mobile_auth_code(
         (code_hash, user_id, to_db_time(expires_at), provider, redirect_uri, state_nonce),
     )
     conn.commit()
-    conn.close()
 
 
 def consume_mobile_auth_code(code_hash: str, now: datetime) -> tuple[str, dict | None]:
@@ -93,8 +92,6 @@ def consume_mobile_auth_code(code_hash: str, now: datetime) -> tuple[str, dict |
     except Exception:
         conn.rollback()
         raise
-    finally:
-        conn.close()
 
 
 def insert_mobile_refresh_token(
@@ -122,7 +119,6 @@ def insert_mobile_refresh_token(
         ),
     )
     conn.commit()
-    conn.close()
 
 
 def _revoke_active_for_user_device(cursor: sqlite3.Cursor, user_id: int, device_id: str, now: datetime):
@@ -220,8 +216,6 @@ def rotate_mobile_refresh_token(
     except Exception:
         conn.rollback()
         raise
-    finally:
-        conn.close()
 
 
 def revoke_mobile_refresh_token_for_user(token_hash: str, user_id: int, now: datetime) -> int:
@@ -237,7 +231,6 @@ def revoke_mobile_refresh_token_for_user(token_hash: str, user_id: int, now: dat
     )
     affected = cursor.rowcount
     conn.commit()
-    conn.close()
     return affected
 
 
@@ -253,7 +246,6 @@ def revoke_mobile_refresh_tokens_for_user(user_id: int, now: datetime):
         (to_db_time(now), to_db_time(now), user_id),
     )
     conn.commit()
-    conn.close()
 
 
 def revoke_mobile_refresh_tokens_for_device(user_id: int, device_id: str, now: datetime):
@@ -268,7 +260,6 @@ def revoke_mobile_refresh_tokens_for_device(user_id: int, device_id: str, now: d
         (to_db_time(now), to_db_time(now), user_id, device_id),
     )
     conn.commit()
-    conn.close()
 
 
 def upsert_mobile_device(
@@ -317,7 +308,6 @@ def upsert_mobile_device(
         ),
     )
     conn.commit()
-    conn.close()
 
 
 def revoke_mobile_device(user_id: int, device_id: str, now: datetime) -> int:
@@ -333,7 +323,6 @@ def revoke_mobile_device(user_id: int, device_id: str, now: datetime) -> int:
     )
     affected = cursor.rowcount
     conn.commit()
-    conn.close()
     return affected
 
 
@@ -354,7 +343,6 @@ def insert_mobile_web_ticket(
         (user_id, ticket_hash, to_db_time(expires_at), device_id),
     )
     conn.commit()
-    conn.close()
 
 
 def consume_mobile_web_ticket(ticket_hash: str, now: datetime) -> tuple[str, dict | None]:
@@ -398,8 +386,6 @@ def consume_mobile_web_ticket(ticket_hash: str, now: datetime) -> tuple[str, dic
     except Exception:
         conn.rollback()
         raise
-    finally:
-        conn.close()
 
 
 def insert_mobile_schoology_oauth_request(
@@ -437,7 +423,6 @@ def insert_mobile_schoology_oauth_request(
         ),
     )
     conn.commit()
-    conn.close()
 
 
 def consume_mobile_schoology_oauth_request(
@@ -489,8 +474,6 @@ def consume_mobile_schoology_oauth_request(
     except Exception:
         conn.rollback()
         raise
-    finally:
-        conn.close()
 
 
 def insert_mobile_notification_event(
@@ -523,7 +506,6 @@ def insert_mobile_notification_event(
     )
     event_id = int(cursor.lastrowid)
     conn.commit()
-    conn.close()
     return event_id
 
 
@@ -541,7 +523,6 @@ def fetch_pending_mobile_notification_events(now: datetime, limit: int = 100) ->
         (to_db_time(now), max(1, limit)),
     )
     rows = cursor.fetchall()
-    conn.close()
 
     results: list[dict] = []
     for row in rows:
@@ -567,7 +548,6 @@ def mark_mobile_notification_event_processing(event_id: int, now: datetime) -> i
     )
     affected = cursor.rowcount
     conn.commit()
-    conn.close()
     return affected
 
 
@@ -584,7 +564,6 @@ def mark_mobile_notification_event_processed(event_id: int, now: datetime) -> in
     )
     affected = cursor.rowcount
     conn.commit()
-    conn.close()
     return affected
 
 
@@ -601,5 +580,4 @@ def mark_mobile_notification_event_failed(event_id: int, now: datetime, error_me
     )
     affected = cursor.rowcount
     conn.commit()
-    conn.close()
     return affected

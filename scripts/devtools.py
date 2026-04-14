@@ -20,6 +20,21 @@ BACKEND_ENV_FILE = BACKEND_DIR / ".env"
 FRONTEND_ENV_FILE = FRONTEND_DIR / ".env.local"
 BACKEND_VENV_DIR = BACKEND_DIR / "env"
 BACKEND_PYTHON = BACKEND_VENV_DIR / "bin" / "python"
+REQUIRED_PYTHON_VERSION = (3, 12)
+REQUIRED_PYTHON_LABEL = "3.12.x"
+BREW_PYTHON_FORMULA = "python@3.12"
+BREW_PACKAGES = {
+    "node": "node",
+    "pnpm": "pnpm",
+}
+HOMEBREW_INSTALL_COMMAND = (
+    '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
+)
+HOMEBREW_INSTALL_SCRIPT = '$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)'
+BREW_CANDIDATE_PATHS = (
+    Path("/opt/homebrew/bin/brew"),
+    Path("/usr/local/bin/brew"),
+)
 
 REQUIRED_BACKEND_ENV = (
     "FLASK_SECRET_KEY",
@@ -31,12 +46,14 @@ REQUIRED_BACKEND_ENV = (
     "SCHOOLOGY_CONSUMER_SECRET",
     "ENCRYPTION_KEY",
     "CONVEX_URL",
+    "CONVEX_BRIDGE_SECRET",
 )
 
 OPTIONAL_BACKEND_ENV = (
     "LLM_API_KEY",
     "LLM_MODEL",
     "CHAT_INTERNAL_SECRET",
+    "MOBILE_TOKEN_HASH_SECRET",
     "UPSTASH_REDIS_URL",
 )
 
@@ -83,6 +100,22 @@ SECRET_PROMPTS = {
     "UPSTASH_REDIS_URL": "Paste the shared Redis URL used for live chat streaming.",
     "NEXT_PUBLIC_POSTHOG_KEY": "Paste the PostHog project key if analytics should be enabled.",
 }
+
+SECRET_EXPORT_KEYS = (
+    "FLASK_SECRET_KEY",
+    "GOOGLE_CLIENT_ID",
+    "GOOGLE_CLIENT_SECRET",
+    "SCHOOLOGY_CONSUMER_KEY",
+    "SCHOOLOGY_CONSUMER_SECRET",
+    "ENCRYPTION_KEY",
+    "CONVEX_BRIDGE_SECRET",
+    "CHAT_INTERNAL_SECRET",
+    "MOBILE_TOKEN_HASH_SECRET",
+    "LLM_API_KEY",
+    "LLM_MODEL",
+    "UPSTASH_REDIS_URL",
+    "NEXT_PUBLIC_POSTHOG_KEY",
+)
 
 
 class DoctorIssue:
@@ -135,6 +168,220 @@ def prompt_yes_no(question: str, default: bool) -> bool:
 
 def normalize_url(value: str) -> str:
     return value.rstrip("/")
+
+
+def is_macos() -> bool:
+    return sys.platform == "darwin"
+
+
+def prepend_to_path(entries: Iterable[Path]) -> None:
+    current = [entry for entry in os.environ.get("PATH", "").split(os.pathsep) if entry]
+    current_set = set(current)
+    additions: list[str] = []
+    for entry in entries:
+        text = str(entry)
+        if not text or text in current_set or text in additions:
+            continue
+        additions.append(text)
+    if additions:
+        os.environ["PATH"] = os.pathsep.join(additions + current)
+
+
+def find_brew_executable() -> str | None:
+    brew = shutil.which("brew")
+    if brew:
+        return brew
+    for candidate in BREW_CANDIDATE_PATHS:
+        if candidate.exists():
+            return str(candidate)
+    return None
+
+
+def get_brew_prefix(brew_executable: str) -> Path | None:
+    try:
+        result = subprocess.run(
+            [brew_executable, "--prefix"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return None
+
+    prefix = result.stdout.strip()
+    return Path(prefix) if prefix else None
+
+
+def apply_homebrew_environment() -> str | None:
+    brew_executable = find_brew_executable()
+    if brew_executable is None:
+        return None
+
+    brew_prefix = get_brew_prefix(brew_executable)
+    if brew_prefix is not None:
+        prepend_to_path(
+            (
+                brew_prefix / "bin",
+                brew_prefix / "sbin",
+                brew_prefix / "opt" / BREW_PYTHON_FORMULA / "libexec" / "bin",
+            )
+        )
+    return brew_executable
+
+
+def get_python_version(command: str) -> tuple[int, int, int] | None:
+    try:
+        result = subprocess.run(
+            [
+                command,
+                "-c",
+                "import sys; print('.'.join(str(part) for part in sys.version_info[:3]))",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return None
+
+    parts = result.stdout.strip().split(".")
+    if len(parts) != 3:
+        return None
+
+    try:
+        return tuple(int(part) for part in parts)  # type: ignore[return-value]
+    except ValueError:
+        return None
+
+
+def format_python_version(version: tuple[int, int, int] | None) -> str:
+    if version is None:
+        return "unknown"
+    return ".".join(str(part) for part in version)
+
+
+def is_required_python_version(version: tuple[int, int, int] | None) -> bool:
+    return version is not None and version[:2] == REQUIRED_PYTHON_VERSION
+
+
+def resolve_python312_command() -> str | None:
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    def add_candidate(candidate: str | Path | None) -> None:
+        if candidate is None:
+            return
+        text = str(candidate)
+        if not text or text in seen or not Path(text).exists():
+            return
+        seen.add(text)
+        candidates.append(text)
+
+    add_candidate(shutil.which("python3.12"))
+
+    brew_executable = find_brew_executable()
+    if brew_executable is not None:
+        brew_prefix = get_brew_prefix(brew_executable)
+        if brew_prefix is not None:
+            add_candidate(brew_prefix / "bin" / "python3.12")
+            add_candidate(brew_prefix / "opt" / BREW_PYTHON_FORMULA / "libexec" / "bin" / "python3")
+
+    add_candidate(shutil.which("python3"))
+
+    for candidate in candidates:
+        if is_required_python_version(get_python_version(candidate)):
+            return candidate
+    return None
+
+
+def check_python_requirement() -> tuple[str | None, list[DoctorIssue]]:
+    python_command = resolve_python312_command()
+    if python_command is not None:
+        return python_command, []
+
+    default_python = shutil.which("python3")
+    if default_python is None:
+        message = f"Missing required Python {REQUIRED_PYTHON_LABEL}."
+    else:
+        version = format_python_version(get_python_version(default_python))
+        message = (
+            f"Missing required Python {REQUIRED_PYTHON_LABEL}. "
+            f"Found python3 {version} at {default_python}."
+        )
+    return None, [DoctorIssue("ERROR", message)]
+
+
+def check_frontend_tools() -> list[DoctorIssue]:
+    issues: list[DoctorIssue] = []
+    for tool in ("node", "pnpm"):
+        if shutil.which(tool) is None:
+            issues.append(DoctorIssue("ERROR", f"Missing required tool: {tool}"))
+    return issues
+
+
+def install_homebrew() -> bool:
+    print_header("Homebrew")
+    print("Homebrew is required to bootstrap local tooling on macOS.")
+    print(f"- Install command: {HOMEBREW_INSTALL_COMMAND}")
+    try:
+        run_command(["/bin/bash", "-c", HOMEBREW_INSTALL_SCRIPT], cwd=ROOT, interactive=True)
+    except subprocess.CalledProcessError:
+        return False
+    return apply_homebrew_environment() is not None
+
+
+def install_required_brew_packages() -> bool:
+    brew_executable = apply_homebrew_environment()
+    if brew_executable is None and not install_homebrew():
+        return False
+
+    brew_executable = apply_homebrew_environment()
+    if brew_executable is None:
+        return False
+
+    packages: list[str] = []
+    python_command = resolve_python312_command()
+    if python_command is None:
+        packages.append(BREW_PYTHON_FORMULA)
+    for tool, formula in BREW_PACKAGES.items():
+        if shutil.which(tool) is None:
+            packages.append(formula)
+
+    if not packages:
+        return True
+
+    print_header("macOS Tool Bootstrap")
+    print(f"- Installing with Homebrew: {' '.join(packages)}")
+    try:
+        run_command([brew_executable, "install", *packages], cwd=ROOT, interactive=True)
+    except subprocess.CalledProcessError:
+        return False
+
+    apply_homebrew_environment()
+    return True
+
+
+def ensure_init_toolchain() -> tuple[str | None, list[DoctorIssue]]:
+    apply_homebrew_environment()
+
+    python_command, python_issues = check_python_requirement()
+    frontend_issues = check_frontend_tools()
+    issues = [*python_issues, *frontend_issues]
+    if not issues:
+        return python_command, []
+
+    if not is_macos():
+        return None, issues
+
+    if not install_required_brew_packages():
+        python_command, python_issues = check_python_requirement()
+        frontend_issues = check_frontend_tools()
+        return None, [*python_issues, *frontend_issues]
+
+    python_command, python_issues = check_python_requirement()
+    frontend_issues = check_frontend_tools()
+    issues = [*python_issues, *frontend_issues]
+    return python_command, issues
 
 
 def run_command(
@@ -224,6 +471,31 @@ def create_fernet_key() -> str:
     return base64.urlsafe_b64encode(os.urandom(32)).decode("ascii")
 
 
+def seed_local_init_env() -> None:
+    print_header("Local Env Defaults")
+
+    backend_existing = load_env_file(BACKEND_ENV_FILE)
+    backend_updates = {
+        **AUTO_BACKEND_DEFAULTS,
+        "FLASK_SECRET_KEY": backend_existing.get("FLASK_SECRET_KEY") or create_flask_secret(),
+        "ENCRYPTION_KEY": backend_existing.get("ENCRYPTION_KEY") or create_fernet_key(),
+        "CONVEX_BRIDGE_SECRET": backend_existing.get("CONVEX_BRIDGE_SECRET") or create_chat_secret(),
+        "MOBILE_TOKEN_HASH_SECRET": (
+            backend_existing.get("MOBILE_TOKEN_HASH_SECRET") or create_chat_secret()
+        ),
+    }
+    write_env_file(BACKEND_ENV_FILE, backend_updates, overwrite_mode="keep")
+    print(f"- Ensured local defaults in {BACKEND_ENV_FILE}")
+
+    frontend_updates = dict(AUTO_FRONTEND_DEFAULTS)
+    write_env_file(FRONTEND_ENV_FILE, frontend_updates, overwrite_mode="keep")
+    print(f"- Ensured local defaults in {FRONTEND_ENV_FILE}")
+
+    synced_convex_url = update_backend_convex_url_from_frontend("keep")
+    if synced_convex_url:
+        print(f"- Synced backend CONVEX_URL to {synced_convex_url}")
+
+
 def load_env_file(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
     if not path.exists():
@@ -311,6 +583,9 @@ def build_backend_updates(options: dict[str, bool], secrets_map: dict[str, str])
     updates = dict(AUTO_BACKEND_DEFAULTS)
     updates["FLASK_SECRET_KEY"] = secrets_map.get("FLASK_SECRET_KEY") or create_flask_secret()
     updates["ENCRYPTION_KEY"] = secrets_map.get("ENCRYPTION_KEY") or create_fernet_key()
+    updates["CONVEX_BRIDGE_SECRET"] = (
+        secrets_map.get("CONVEX_BRIDGE_SECRET") or create_chat_secret()
+    )
     updates["GOOGLE_CLIENT_ID"] = secrets_map["GOOGLE_CLIENT_ID"]
     updates["GOOGLE_CLIENT_SECRET"] = secrets_map["GOOGLE_CLIENT_SECRET"]
     updates["SCHOOLOGY_CONSUMER_KEY"] = secrets_map["SCHOOLOGY_CONSUMER_KEY"]
@@ -383,19 +658,25 @@ def detect_existing_state() -> dict[str, bool]:
 
 
 def cmd_init(_args: argparse.Namespace) -> int:
-    issues = ensure_tools(("python3", "node", "pnpm"))
+    python_command, issues = ensure_init_toolchain()
     if issues:
         print_doctor_report(issues)
+        if not is_macos():
+            print("idk bro i only use macos")
+        return 1
+    if python_command is None:
+        print_doctor_report([DoctorIssue("ERROR", f"Missing required Python {REQUIRED_PYTHON_LABEL}.")])
         return 1
 
     print_header("Backend Dependencies")
     if not BACKEND_VENV_DIR.exists():
-        run_command(["python3", "-m", "venv", str(BACKEND_VENV_DIR)])
+        run_command([python_command, "-m", "venv", str(BACKEND_VENV_DIR)])
     run_command([str(BACKEND_PYTHON), "-m", "pip", "install", "--upgrade", "pip"], cwd=BACKEND_DIR)
     run_command(
         [str(BACKEND_PYTHON), "-m", "pip", "install", "-r", "requirements.txt"],
         cwd=BACKEND_DIR,
     )
+    seed_local_init_env()
 
     print_header("Frontend Dependencies")
     run_command(["pnpm", "install"], cwd=FRONTEND_DIR)
@@ -406,7 +687,8 @@ def doctor(component: str) -> list[DoctorIssue]:
     issues: list[DoctorIssue] = []
     dev_config = load_dev_config()
     if component in {"full", "backend"}:
-        issues.extend(ensure_tools(("python3",)))
+        _python_command, python_issues = check_python_requirement()
+        issues.extend(python_issues)
         issues.extend(check_expected_listener(3111, BACKEND_DIR, "backend"))
         if not BACKEND_PYTHON.exists():
             issues.append(DoctorIssue("ERROR", "Backend virtualenv is missing. Run make init or make setup."))
@@ -416,8 +698,7 @@ def doctor(component: str) -> list[DoctorIssue]:
             issues.extend(check_env_keys(load_env_file(BACKEND_ENV_FILE), REQUIRED_BACKEND_ENV))
 
     if component in {"full", "frontend", "convex"}:
-        needed = ("node", "pnpm")
-        issues.extend(ensure_tools(needed))
+        issues.extend(check_frontend_tools())
         issues.extend(check_expected_listener(3112, FRONTEND_DIR, "frontend"))
         if not (FRONTEND_DIR / "node_modules").exists():
             issues.append(DoctorIssue("ERROR", "frontend/node_modules is missing. Run make init or make setup."))
@@ -509,6 +790,23 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 1 if any(issue.severity == "ERROR" for issue in issues) else 0
 
 
+def cmd_secret_export(_args: argparse.Namespace) -> int:
+    combined = {
+        **load_env_file(BACKEND_ENV_FILE),
+        **load_env_file(FRONTEND_ENV_FILE),
+    }
+    lines = [
+        f"{key}={format_env_value(combined[key])}"
+        for key in SECRET_EXPORT_KEYS
+        if combined.get(key, "").strip()
+    ]
+    if not lines:
+        print("No exportable secrets found in backend/.env or frontend/.env.local.")
+        return 1
+    print("\n".join(lines))
+    return 0
+
+
 def remove_generated_frontend_gitignore() -> None:
     frontend_gitignore = FRONTEND_DIR / ".gitignore"
     if frontend_gitignore.exists():
@@ -542,14 +840,30 @@ def run_convex_setup() -> bool:
 
 
 def sync_convex_env(updates: dict[str, str]) -> bool:
+    import time
     print_header("Convex Deployment Env")
+    dev_config = load_dev_config()
+    convex_mode = dev_config.get("CONVEX_DEV_MODE", "cloud")
+    command = ["pnpm", "exec", "convex", "dev"]
+    if convex_mode == "local":
+        command.append("--local")
+    print("Starting convex dev in background so env vars can be written...")
+    proc = subprocess.Popen(command, cwd=FRONTEND_DIR, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
+        # Give the dev server a moment to initialize before pushing env vars
+        time.sleep(5)
         for key, value in updates.items():
             run_command(["pnpm", "exec", "convex", "env", "set", key, value], cwd=FRONTEND_DIR)
         return True
     except subprocess.CalledProcessError:
         print("Failed to push one or more env vars into Convex.")
         return False
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
 
 
 def prompt_for_missing(required_keys: Iterable[str], current: dict[str, str]) -> dict[str, str]:
@@ -779,7 +1093,10 @@ def cmd_setup(_args: argparse.Namespace) -> int:
         convex_backend_url = frontend_updates["NEXT_PUBLIC_BACKEND_URL"]
         if options["chat"] and options["chat_network_mode"] == "public":
             convex_backend_url = options["public_backend_url"]
-        convex_env_updates = {"NEXT_PUBLIC_BACKEND_URL": convex_backend_url}
+        convex_env_updates = {
+            "NEXT_PUBLIC_BACKEND_URL": convex_backend_url,
+            "CONVEX_BRIDGE_SECRET": backend_updates["CONVEX_BRIDGE_SECRET"],
+        }
         if options["chat"] and options["chat_network_mode"] != "skip":
             chat_backend_url = (
                 options["public_backend_url"]
@@ -838,6 +1155,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Restrict checks to a single component",
     )
     doctor_parser.set_defaults(func=cmd_doctor)
+
+    secret_export_parser = subparsers.add_parser(
+        "secret-export",
+        help="Print a paste-ready secrets block for setup",
+    )
+    secret_export_parser.set_defaults(func=cmd_secret_export)
 
     convex_parser = subparsers.add_parser("print-convex-command", help="Print the convex dev command for the current local mode")
     convex_parser.set_defaults(func=cmd_print_convex_command)

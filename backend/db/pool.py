@@ -12,7 +12,11 @@ _local = threading.local()
 
 
 def get_conn(path: str) -> sqlite3.Connection:
-    """Return the thread-local connection for *path*, creating it if needed."""
+    """Return the thread-local connection for *path*, creating it if needed.
+
+    Callers should commit or roll back transactions but should not close the
+    returned connection directly.
+    """
     if not hasattr(_local, "conns"):
         _local.conns: dict[str, sqlite3.Connection] = {}
     if path not in _local.conns:

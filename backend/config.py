@@ -4,36 +4,104 @@ Configuration module for Pinewood One Backend
 import os
 import secrets
 from datetime import timedelta
+from pathlib import Path
+
+from cryptography.fernet import Fernet
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 
+BACKEND_ROOT = Path(__file__).resolve().parent
+KEYS_DIR = BACKEND_ROOT / "keys"
+FLASK_ENV = os.environ.get("FLASK_ENV", "development").strip().lower()
+
+
+def _is_production() -> bool:
+    return FLASK_ENV == "production"
+
+
+def _read_secret_file(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    value = path.read_text(encoding="utf-8").strip()
+    return value or None
+
+
+def _write_secret_file(path: Path, value: str) -> str:
+    KEYS_DIR.mkdir(parents=True, exist_ok=True)
+    path.write_text(value, encoding="utf-8")
+    return value
+
+
+def _load_secret(
+    env_name: str,
+    *,
+    filename: str | None = None,
+    generator=None,
+    required_in_production: bool = True,
+) -> str | None:
+    value = os.environ.get(env_name)
+    if value:
+        return value
+
+    file_path = KEYS_DIR / filename if filename else None
+    if file_path:
+        file_value = _read_secret_file(file_path)
+        if file_value:
+            return file_value
+
+    if _is_production():
+        if required_in_production:
+            raise ValueError(
+                f"{env_name} is required in production. Set the environment variable"
+                f" or provision {file_path} before startup."
+            )
+        return None
+
+    if generator is None or file_path is None:
+        return None
+
+    return _write_secret_file(file_path, generator())
+
 
 class Config:
     """Application configuration"""
-    
+
+    ENVIRONMENT = FLASK_ENV
+
     # Flask configuration
-    SECRET_KEY = os.environ.get("FLASK_SECRET_KEY", secrets.token_hex(16))
+    SECRET_KEY = _load_secret(
+        "FLASK_SECRET_KEY",
+        filename="flask_secret.txt",
+        generator=lambda: secrets.token_urlsafe(48),
+    )
     SESSION_LIFETIME = timedelta(days=7)
-    
+
     # URLs
     FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3112")
     BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:3111")
-    
+
     # Google OAuth
     GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "your-client-id")
     GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "your-client-secret")
-    
+
     # Schoology OAuth
     SCHOOLOGY_CONSUMER_KEY = os.environ.get("SCHOOLOGY_CONSUMER_KEY")
     SCHOOLOGY_CONSUMER_SECRET = os.environ.get("SCHOOLOGY_CONSUMER_SECRET")
     SCHOOLOGY_DOMAIN = os.environ.get("SCHOOLOGY_DOMAIN", "https://app.schoology.com")
     SCHOOLOGY_API_DOMAIN = os.environ.get("SCHOOLOGY_API_DOMAIN", "https://api.schoology.com")
-    
+    SCHOOLOGY_REFRESH_LEASE_TTL_SECONDS = int(
+        os.environ.get("SCHOOLOGY_REFRESH_LEASE_TTL_SECONDS", "1800")
+    )
+
     # Encryption
-    ENCRYPTION_KEY = os.environ.get("ENCRYPTION_KEY")
-    
+    ENCRYPTION_KEY = _load_secret(
+        "ENCRYPTION_KEY",
+        filename="encryption.key",
+        generator=lambda: Fernet.generate_key().decode("utf-8"),
+    )
+
     # Database paths
     MAIN_DB_PATH = "main.db"
     SESSIONS_DB_PATH = "api_sessions.db"
@@ -41,6 +109,10 @@ class Config:
     # Convex configuration
     CONVEX_URL = os.environ.get("CONVEX_URL", "http://127.0.0.1:3210")
     CONVEX_ADMIN_KEY = os.environ.get("CONVEX_ADMIN_KEY")
+    CONVEX_BRIDGE_SECRET = (
+        os.environ.get("CONVEX_BRIDGE_SECRET")
+        or os.environ.get("CHAT_INTERNAL_SECRET")
+    )
 
     # Chat / LLM configuration
     LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "https://openrouter.ai/api/v1")
@@ -65,7 +137,11 @@ class Config:
     MOBILE_SCHOOLOGY_REQUEST_TTL_SECONDS = int(
         os.environ.get("MOBILE_SCHOOLOGY_REQUEST_TTL_SECONDS", "300")
     )
-    MOBILE_TOKEN_HASH_SECRET = os.environ.get("MOBILE_TOKEN_HASH_SECRET")
+    MOBILE_TOKEN_HASH_SECRET = _load_secret(
+        "MOBILE_TOKEN_HASH_SECRET",
+        filename="mobile_token_hash_secret.txt",
+        generator=lambda: secrets.token_urlsafe(48),
+    )
     MOBILE_ALLOWED_REDIRECT_URIS = [
         value.strip()
         for value in os.environ.get(
@@ -86,15 +162,22 @@ class Config:
     )
 
     @classmethod
+    def is_production(cls) -> bool:
+        return cls.ENVIRONMENT == "production"
+
+    @classmethod
     def validate(cls):
         """Validate configuration and print status"""
         if not cls.SCHOOLOGY_CONSUMER_KEY or not cls.SCHOOLOGY_CONSUMER_SECRET:
-            print("⚠️  WARNING: Schoology OAuth credentials not found in environment variables!")
-            print("   Please set SCHOOLOGY_CONSUMER_KEY and SCHOOLOGY_CONSUMER_SECRET in .env")
+            print("WARNING: Schoology OAuth credentials not found in environment variables.")
+            print("Set SCHOOLOGY_CONSUMER_KEY and SCHOOLOGY_CONSUMER_SECRET in backend/.env.")
         else:
-            print(f"✅ Schoology OAuth configured with official developer credentials")
-            print(f"   Consumer Key: {cls.SCHOOLOGY_CONSUMER_KEY[:20]}...")
-            print(f"   Domain: {cls.SCHOOLOGY_DOMAIN}")
+            print("Schoology OAuth configured with official developer credentials.")
+            print(f"Domain: {cls.SCHOOLOGY_DOMAIN}")
 
-        if os.environ.get("FLASK_ENV") == "production" and not cls.MOBILE_TOKEN_HASH_SECRET:
-            raise ValueError("MOBILE_TOKEN_HASH_SECRET is required in production")
+        if not cls.CONVEX_BRIDGE_SECRET:
+            print(
+                "WARNING: Convex bridge secret is not configured. "
+                "Backend-triggered Convex internal updates will fail until "
+                "CONVEX_BRIDGE_SECRET or CHAT_INTERNAL_SECRET is set in both backend and Convex."
+            )

@@ -12,11 +12,12 @@ from db.tokens import (
     save_schoology_credentials,
     save_schoology_request_tokens,
     save_schoology_access_tokens,
-    delete_schoology_tokens_row,
+    get_schoology_request_token_record,
     delete_schoology_tokens
 )
 from db.encryption import decrypt_token
 from onboarding import update_schoology_connected, update_onboarding_step
+from services.schoology import SchoologyService
 
 # Blueprint for /oauth/schoology/* routes
 oauth_bp = Blueprint('schoology_oauth', __name__, url_prefix='/oauth/schoology')
@@ -39,16 +40,21 @@ def schoology_developer_override(user):
     if not client_id or not client_secret:
         return jsonify({"error": "Invalid credentials"}), 400
 
-    row_id = None
     try:
-        row_id = save_schoology_credentials(user["id"], client_id, client_secret)
-
-        service = create_schoology_service(user["id"])
-        if not service:
-            raise Exception("Failed to create Schoology service")
+        service = SchoologyService(
+            user_id=str(user["id"]),
+            access_token=None,
+            access_token_secret=None,
+            consumer_key=client_id,
+            consumer_secret=client_secret,
+            convex_url=Config.CONVEX_URL,
+            schoology_domain=Config.SCHOOLOGY_DOMAIN,
+            schoology_api_domain=Config.SCHOOLOGY_API_DOMAIN,
+        )
 
         # Validate credentials with a lightweight call.
         schoology_user = service.get_user_info()
+        save_schoology_credentials(user["id"], client_id, client_secret)
 
         try:
             update_schoology_connected(Config.CONVEX_URL, str(user["id"]), True)
@@ -68,11 +74,6 @@ def schoology_developer_override(user):
         print(f"[ERROR] Schoology developer override error: {e}")
         import traceback
         traceback.print_exc()
-        if row_id is not None:
-            try:
-                delete_schoology_tokens_row(row_id)
-            except Exception as cleanup_error:
-                print(f"[WARNING] Failed to rollback override row: {cleanup_error}")
         return jsonify({"error": "Invalid credentials"}), 400
 
 
@@ -124,26 +125,13 @@ def schoology_oauth_callback():
         if not oauth_token:
             return redirect(f"{Config.FRONTEND_URL}/onboarding?error=schoology_callback_failed")
 
-        # Find which user this request token belongs to
-        import sqlite3
-        conn = sqlite3.connect(Config.MAIN_DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT user_id, request_token, request_token_secret FROM schoology_tokens WHERE request_token IS NOT NULL"
+        request_record = get_schoology_request_token_record(oauth_token)
+        user_id = request_record["user_id"] if request_record else None
+        request_token_secret = (
+            decrypt_token(request_record["request_token_secret"])
+            if request_record
+            else None
         )
-        all_tokens = cursor.fetchall()
-        conn.close()
-
-        user_id = None
-        request_token_secret = None
-
-        # Match the oauth_token with stored encrypted request tokens
-        for uid, encrypted_req_token, encrypted_req_secret in all_tokens:
-            decrypted_token = decrypt_token(encrypted_req_token)
-            if decrypted_token == oauth_token:
-                user_id = uid
-                request_token_secret = decrypt_token(encrypted_req_secret)
-                break
 
         if not user_id or not request_token_secret:
             print(f"[ERROR] Could not find user for oauth_token: {oauth_token}")

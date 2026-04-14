@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { query, mutation } from "./_generated/server";
+import { query, internalMutation } from "./_generated/server";
 import { getOptionalAuthenticatedUser } from "./auth";
 
 const USER_STATE_KEYS = [
@@ -477,14 +477,14 @@ export const getUpcoming = query({
 });
 
 // ============================================================================
-// MUTATIONS - Backend updates cached data
-// These are called by the trusted backend after user authentication
+// INTERNAL MUTATIONS - Backend bridge updates cached data
+// These are not client-callable.
 // ============================================================================
 
 /**
  * Update courses cache and memberships for a user.
  */
-export const updateCourses = mutation({
+export const updateCourses = internalMutation({
   args: {
     userId: v.string(),
     courses: v.array(v.any()),
@@ -567,7 +567,7 @@ export const updateCourses = mutation({
 /**
  * Update shared assignments cache for a course.
  */
-export const updateAssignments = mutation({
+export const updateAssignments = internalMutation({
   args: {
     courseId: v.string(),
     assignments: v.array(v.any()),
@@ -587,7 +587,7 @@ export const updateAssignments = mutation({
 /**
  * Update per-user assignment state for a course.
  */
-export const updateAssignmentUserState = mutation({
+export const updateAssignmentUserState = internalMutation({
   args: {
     userId: v.string(),
     courseId: v.string(),
@@ -609,7 +609,7 @@ export const updateAssignmentUserState = mutation({
 /**
  * Update shared assignments cache and per-user assignment state for a course.
  */
-export const updateCourseAssignments = mutation({
+export const updateCourseAssignments = internalMutation({
   args: {
     userId: v.string(),
     courseId: v.string(),
@@ -637,7 +637,7 @@ export const updateCourseAssignments = mutation({
 /**
  * Clear cached user links/state while preserving shared course/assignment records.
  */
-export const clearCache = mutation({
+export const clearCache = internalMutation({
   args: { userId: v.string() },
   handler: async (ctx, args) => {
     const memberships = await ctx.db
