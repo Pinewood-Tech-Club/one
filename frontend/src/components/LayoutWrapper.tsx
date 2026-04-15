@@ -10,11 +10,20 @@ type AuthState = {
   onboardingStep: string | null;
 } | null;
 
+function normalizePathname(pathname: string): string {
+  if (pathname.length > 1 && pathname.endsWith('/')) {
+    return pathname.slice(0, -1);
+  }
+
+  return pathname;
+}
+
 export function LayoutWrapper({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const normalizedPathname = normalizePathname(pathname);
   const [authState, setAuthState] = useState<AuthState>(null);
-  const isHelpRoute = pathname.startsWith('/help');
-  const isMobileOnboardingRoute = pathname.startsWith('/mobile/onboarding');
+  const isHelpRoute = normalizedPathname.startsWith('/help');
+  const isMobileOnboardingRoute = normalizedPathname.startsWith('/mobile/onboarding');
   const shouldBypassAuthGate = isHelpRoute || isMobileOnboardingRoute;
 
   useEffect(() => {
@@ -44,7 +53,7 @@ export function LayoutWrapper({ children }: { children: React.ReactNode }) {
     };
 
     checkAuth();
-  }, [pathname, shouldBypassAuthGate]);
+  }, [normalizedPathname, shouldBypassAuthGate]);
 
   // Bypass auth check for help/docs and mobile onboarding routes.
   if (shouldBypassAuthGate) {
@@ -71,13 +80,13 @@ export function LayoutWrapper({ children }: { children: React.ReactNode }) {
 
   // Not authenticated — redirect to login for known protected routes
   const isProtectedRoute =
-    pathname === '/upcoming' ||
-    pathname === '/schedule' ||
-    pathname === '/grades' ||
-    pathname.startsWith('/chat') ||
-    pathname === '/user' ||
-    pathname.startsWith('/onboarding') ||
-    pathname.startsWith('/dashboard');
+    normalizedPathname === '/upcoming' ||
+    normalizedPathname === '/activities' ||
+    normalizedPathname === '/progress' ||
+    normalizedPathname.startsWith('/chat') ||
+    normalizedPathname === '/user' ||
+    normalizedPathname.startsWith('/onboarding') ||
+    normalizedPathname.startsWith('/dashboard');
 
   if (isProtectedRoute) {
     window.location.replace('/login');

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { usePathname } from 'next/navigation';
 import { useQuery, useMutation } from 'convex/react';
 import { api } from '../../../../convex/_generated/api';
 import type { Id } from '../../../../convex/_generated/dataModel';
@@ -14,6 +15,18 @@ type StreamingState = {
   activity: string | null;
   generationId: Id<'chatGenerations'>;
 } | null;
+
+function normalizePathname(pathname: string): string {
+  if (pathname.length > 1 && pathname.endsWith('/')) {
+    return pathname.slice(0, -1);
+  }
+
+  return pathname;
+}
+
+function getChatUrl(threadId: Id<'chatThreads'> | null): string {
+  return threadId ? `/chat/#${threadId}` : '/chat/';
+}
 
 // ── SSE parsing hook ──────────────────────────────────────────────────────────
 
@@ -207,6 +220,8 @@ function MessageBubble({
 // ── Main chat page ────────────────────────────────────────────────────────────
 
 export default function ChatPage() {
+  const pathname = usePathname();
+  const isChatRoute = normalizePathname(pathname) === '/chat';
   const [selectedThreadId, setSelectedThreadId] = useState<Id<'chatThreads'> | null>(null);
   const [hashInitialized, setHashInitialized] = useState(false);
   const [inputValue, setInputValue] = useState('');
@@ -303,20 +318,20 @@ export default function ChatPage() {
 
   // Read hash on mount to restore selected thread
   useEffect(() => {
-    const hash = window.location.hash.slice(1);
-    if (hash) setSelectedThreadId(hash as Id<'chatThreads'>);
+    if (normalizePathname(window.location.pathname) === '/chat') {
+      const hash = window.location.hash.slice(1);
+      if (hash) setSelectedThreadId(hash as Id<'chatThreads'>);
+    }
+
     setHashInitialized(true);
   }, []);
 
   // Sync selected thread to URL hash
   useEffect(() => {
-    if (!hashInitialized) return;
-    if (selectedThreadId) {
-      window.history.replaceState(null, '', `#${selectedThreadId}`);
-    } else {
-      window.history.replaceState(null, '', window.location.pathname);
-    }
-  }, [selectedThreadId, hashInitialized]);
+    if (!hashInitialized || !isChatRoute) return;
+
+    window.history.replaceState(null, '', getChatUrl(selectedThreadId));
+  }, [hashInitialized, isChatRoute, selectedThreadId]);
 
   // Auto-scroll to bottom
   useEffect(() => {
