@@ -44,6 +44,16 @@ export const getOrCreateUser = action({
   },
 });
 
+export const listEligibleScraperUsers = action({
+  args: {
+    secret: v.string(),
+  },
+  handler: async (ctx, args): Promise<any> => {
+    assertSecret(args.secret);
+    return await ctx.runQuery(internal.users.listEligibleScraperUsers, {});
+  },
+});
+
 export const updateOnboardingStep = action({
   args: {
     secret: v.string(),

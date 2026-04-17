@@ -22,3 +22,6 @@ PyJWT==2.8.0
 convex==0.7.0
 openai==2.30.0
 redis==7.4.0
+google-api-python-client==2.187.0
+google-auth==2.41.1
+google-auth-oauthlib==1.2.3

@@ -2,11 +2,13 @@
 Schoology API client wrapper
 """
 import json
+from pathlib import Path
 from xml.sax.saxutils import escape
 import schoolopy
+import requests
 import requests_oauthlib
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urlencode, urlparse
+from urllib.parse import urlencode, urljoin, urlparse
 from .convex_sync import (
     sync_courses,
     sync_course_assignments,
@@ -55,6 +57,8 @@ class SchoologyService:
         self.convex_url = convex_url
         self.consumer_key = consumer_key
         self.consumer_secret = consumer_secret
+        self.access_token = access_token
+        self.access_token_secret = access_token_secret
 
         three_legged = bool(access_token and access_token_secret)
 
@@ -146,6 +150,31 @@ class SchoologyService:
         except ValueError:
             return response.text
 
+    def _download_schoology_binary(self, url: str) -> tuple[bytes, str | None]:
+        resolved_url = url if urlparse(url).scheme else urljoin(self.sc.api_host, url)
+        parsed = urlparse(resolved_url)
+        api_netloc = urlparse(self.sc.api_host).netloc.lower()
+
+        auth = None
+        if parsed.netloc.lower() == api_netloc:
+            auth = requests_oauthlib.OAuth1(
+                self.consumer_key,
+                client_secret=self.consumer_secret,
+                resource_owner_key=self.access_token,
+                resource_owner_secret=self.access_token_secret,
+                signature_method="PLAINTEXT",
+                signature_type="auth_header",
+            )
+
+        response = requests.get(
+            resolved_url,
+            auth=auth,
+            timeout=60,
+            allow_redirects=True,
+        )
+        response.raise_for_status()
+        return response.content, response.headers.get("Content-Type")
+
     def _multiget(self, request_paths: list[str]) -> list[dict]:
         body = ["<?xml version=\"1.0\" encoding=\"utf-8\" ?>", "<requests>"]
         for path in request_paths:
@@ -235,7 +264,19 @@ class SchoologyService:
 
         return courses
 
-    def get_assignments(self, course_id: str, sync_to_convex: bool = True) -> list[dict]:
+    def get_sections(self, sync_to_convex: bool = False) -> list[dict]:
+        """
+        Fetch sections visible to the current credential owner.
+        """
+        return self.get_courses(sync_to_convex=sync_to_convex)
+
+    def get_assignments(
+        self,
+        course_id: str,
+        sync_to_convex: bool = True,
+        *,
+        with_attachments: bool = False,
+    ) -> list[dict]:
         """
         Fetch assignments for a specific course
 
@@ -246,7 +287,10 @@ class SchoologyService:
         Returns:
             List of assignment dictionaries
         """
-        assignment_dicts = self._fetch_section_assignments_paginated(course_id)
+        assignment_dicts = self._fetch_section_assignments_paginated(
+            course_id,
+            with_attachments=with_attachments,
+        )
 
         if sync_to_convex:
             sync_course_assignments(self.convex_url, self.user_id, str(course_id), assignment_dicts)
@@ -318,7 +362,13 @@ class SchoologyService:
             "page_count": 0,
         }
 
-    def _fetch_section_assignments_paginated(self, section_id: str | int, page_limit: int = 200) -> list[dict]:
+    def _fetch_section_assignments_paginated(
+        self,
+        section_id: str | int,
+        page_limit: int = 200,
+        *,
+        with_attachments: bool = False,
+    ) -> list[dict]:
         """
         Fetch all assignments for a section by paging Schoology's assignments endpoint.
         """
@@ -329,7 +379,11 @@ class SchoologyService:
             payload = self._request_schoology(
                 "GET",
                 f"sections/{section_id}/assignments",
-                params={"start": state["start"], "limit": page_limit},
+                params={
+                    "start": state["start"],
+                    "limit": page_limit,
+                    **({"with_attachments": 1} if with_attachments else {}),
+                },
             )
             state["page_count"] += 1
             if self._merge_assignment_page(state, payload):
@@ -341,7 +395,13 @@ class SchoologyService:
         )
         return state["assignments"]
 
-    def _fetch_assignments_for_sections(self, section_ids: list[str | int], page_limit: int = 200) -> dict[str, list[dict]]:
+    def _fetch_assignments_for_sections(
+        self,
+        section_ids: list[str | int],
+        page_limit: int = 200,
+        *,
+        with_attachments: bool = False,
+    ) -> dict[str, list[dict]]:
         normalized_ids = [
             str(section_id)
             for section_id in section_ids
@@ -362,7 +422,9 @@ class SchoologyService:
             next_pending: list[str] = []
             for chunk in self._chunked(pending, 50):
                 request_paths = [
-                    f"/v1/sections/{section_id}/assignments?start={states[section_id]['start']}&limit={page_limit}"
+                    f"/v1/sections/{section_id}/assignments?"
+                    f"start={states[section_id]['start']}&limit={page_limit}"
+                    f"{'&with_attachments=1' if with_attachments else ''}"
                     for section_id in chunk
                 ]
 
@@ -382,6 +444,7 @@ class SchoologyService:
                             completed[section_id] = self._fetch_section_assignments_paginated(
                                 section_id,
                                 page_limit=page_limit,
+                                with_attachments=with_attachments,
                             )
                         except Exception as section_exc:
                             print(
@@ -407,6 +470,135 @@ class SchoologyService:
             pending = next_pending
 
         return completed
+
+    @staticmethod
+    def _extract_collection_page(payload, item_key: str) -> tuple[list[dict], int | None, int | None]:
+        if not isinstance(payload, dict):
+            raise ValueError(f"{item_key} payload was not a JSON object")
+
+        raw_items = payload.get(item_key, [])
+        if isinstance(raw_items, dict):
+            raw_items = [raw_items]
+        elif raw_items is None:
+            raw_items = []
+        elif not isinstance(raw_items, list):
+            raise ValueError(f"{item_key} payload contained an invalid {item_key} field")
+
+        total = SchoologyService._coerce_positive_int(payload.get("total"))
+        count = SchoologyService._coerce_positive_int(payload.get("count"))
+        return raw_items, total, count
+
+    def _merge_collection_page(self, state: dict, payload, *, item_key: str, id_keys: tuple[str, ...]) -> bool:
+        raw_items, total, count = self._extract_collection_page(payload, item_key)
+        start = state["start"]
+
+        if not raw_items:
+            return True
+
+        page_new = 0
+        for raw in raw_items:
+            if not isinstance(raw, dict):
+                continue
+            item_id = None
+            for key in id_keys:
+                value = raw.get(key)
+                if value is not None and str(value).strip():
+                    item_id = str(value)
+                    break
+            dedupe_key = item_id or f"fallback:{start}:{page_new}"
+            if dedupe_key in state["seen_ids"]:
+                continue
+            state["seen_ids"].add(dedupe_key)
+            state["items"].append(raw)
+            page_new += 1
+
+        page_size = count if count and count > 0 else len(raw_items)
+        next_start = start + page_size
+
+        if total is not None and next_start >= total:
+            return True
+        if next_start <= start:
+            return True
+        if page_new == 0:
+            return True
+
+        state["start"] = next_start
+        return False
+
+    def _build_collection_fetch_state(self) -> dict:
+        return {
+            "start": 0,
+            "items": [],
+            "seen_ids": set(),
+            "page_count": 0,
+        }
+
+    def _fetch_section_documents_paginated(
+        self,
+        section_id: str | int,
+        page_limit: int = 200,
+        *,
+        with_attachments: bool = True,
+    ) -> list[dict]:
+        """
+        Fetch all documents/materials for a section by paging the documents endpoint.
+        """
+        max_pages = 500
+        state = self._build_collection_fetch_state()
+
+        while state["page_count"] < max_pages:
+            params = {"start": state["start"], "limit": page_limit}
+            if with_attachments:
+                params["with_attachments"] = 1
+            try:
+                payload = self._request_schoology(
+                    "GET",
+                    f"sections/{section_id}/documents",
+                    params=params,
+                )
+            except Exception:
+                if with_attachments:
+                    payload = self._request_schoology(
+                        "GET",
+                        f"sections/{section_id}/documents",
+                        params={"start": state["start"], "limit": page_limit},
+                    )
+                else:
+                    raise
+            state["page_count"] += 1
+            if self._merge_collection_page(
+                state,
+                payload,
+                item_key="document",
+                id_keys=("id", "document_id"),
+            ):
+                break
+
+        print(
+            f"[DEBUG] Document pagination summary user={self.user_id} section={section_id} "
+            f"pages={state['page_count']} total_rows={len(state['items'])}"
+        )
+        return state["items"]
+
+    def get_documents(
+        self,
+        section_id: str,
+        *,
+        with_attachments: bool = True,
+    ) -> list[dict]:
+        """
+        Fetch documents/materials for a section.
+        """
+        return self._fetch_section_documents_paginated(
+            section_id,
+            with_attachments=with_attachments,
+        )
+
+    def download_attachment_bytes(self, url: str) -> tuple[bytes, str | None]:
+        """
+        Download an attachment using the current Schoology credential context.
+        """
+        return self._download_schoology_binary(url)
 
     @staticmethod
     def _parse_due_datetime(due_raw) -> datetime | None:

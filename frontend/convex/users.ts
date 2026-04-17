@@ -43,6 +43,29 @@ export const getUserByUserId = internalQuery({
   },
 });
 
+/**
+ * List users eligible to act as backend scraper credential sources.
+ */
+export const listEligibleScraperUsers = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const users = await ctx.db.query("users").collect();
+    return users
+      .filter(
+        (user) =>
+          user.schoologyConnected === true &&
+          user.smartFeaturesConsent?.enabled === true,
+      )
+      .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
+      .map((user) => ({
+        userId: user.userId,
+        schoologyConnected: user.schoologyConnected,
+        smartFeaturesConsent: user.smartFeaturesConsent,
+        updatedAt: user.updatedAt,
+      }));
+  },
+});
+
 // ============================================================================
 // INTERNAL MUTATIONS - Backend bridge updates user data
 // These are not client-callable.

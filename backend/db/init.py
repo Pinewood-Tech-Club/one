@@ -12,6 +12,7 @@ def init_db():
     """Initialize both databases"""
     init_sessions_db()
     init_main_db()
+    init_scraper_db()
 
 
 def init_sessions_db():
@@ -101,6 +102,166 @@ def init_main_db():
 
     conn.commit()
     conn.close()
+
+
+def init_scraper_db():
+    """Initialize the dedicated scraper database and storage root."""
+    conn = sqlite3.connect(Config.SCRAPER_DB_PATH)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+    CREATE TABLE IF NOT EXISTS scraper_users (
+        user_id INTEGER PRIMARY KEY,
+        eligible INTEGER NOT NULL DEFAULT 0,
+        schoology_connected INTEGER NOT NULL DEFAULT 0,
+        smart_features_enabled INTEGER NOT NULL DEFAULT 0,
+        has_valid_credentials INTEGER NOT NULL DEFAULT 0,
+        last_convex_check_at TIMESTAMP,
+        last_sections_refresh_at TIMESTAMP,
+        last_credential_error TEXT
+    )
+    """
+    )
+
+    cursor.execute(
+        """
+    CREATE TABLE IF NOT EXISTS section_memberships (
+        user_id INTEGER NOT NULL,
+        section_id TEXT NOT NULL,
+        role TEXT,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        last_seen_at TIMESTAMP NOT NULL,
+        PRIMARY KEY (user_id, section_id)
+    )
+    """
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_section_memberships_section_id "
+        "ON section_memberships (section_id)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_section_memberships_user_active "
+        "ON section_memberships (user_id, is_active)"
+    )
+
+    cursor.execute(
+        """
+    CREATE TABLE IF NOT EXISTS sections (
+        section_id TEXT PRIMARY KEY,
+        title TEXT,
+        course_title TEXT,
+        raw_json TEXT NOT NULL,
+        raw_hash TEXT NOT NULL,
+        last_discovered_at TIMESTAMP NOT NULL,
+        last_scraped_at TIMESTAMP,
+        last_successful_sync_at TIMESTAMP,
+        deleted_at TIMESTAMP
+    )
+    """
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sections_last_successful_sync_at "
+        "ON sections (last_successful_sync_at)"
+    )
+
+    cursor.execute(
+        """
+    CREATE TABLE IF NOT EXISTS section_sync_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        section_id TEXT NOT NULL,
+        credential_user_id INTEGER NOT NULL,
+        owner_token TEXT NOT NULL,
+        status TEXT NOT NULL,
+        run_started_at TIMESTAMP NOT NULL,
+        heartbeat_at TIMESTAMP NOT NULL,
+        finished_at TIMESTAMP,
+        attempt_count INTEGER NOT NULL DEFAULT 1,
+        last_error TEXT
+    )
+    """
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_section_sync_runs_section_status "
+        "ON section_sync_runs (section_id, status)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_section_sync_runs_status_heartbeat "
+        "ON section_sync_runs (status, heartbeat_at)"
+    )
+
+    cursor.execute(
+        """
+    CREATE TABLE IF NOT EXISTS section_resources (
+        resource_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        section_id TEXT NOT NULL,
+        schoology_id TEXT NOT NULL,
+        resource_type TEXT NOT NULL,
+        title TEXT,
+        description_preview TEXT,
+        published INTEGER,
+        available INTEGER,
+        due_at TIMESTAMP,
+        raw_json TEXT NOT NULL,
+        raw_hash TEXT NOT NULL,
+        attachment_manifest_hash TEXT NOT NULL,
+        first_seen_at TIMESTAMP NOT NULL,
+        last_seen_at TIMESTAMP NOT NULL,
+        deleted_at TIMESTAMP,
+        UNIQUE (section_id, resource_type, schoology_id)
+    )
+    """
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_section_resources_section_type "
+        "ON section_resources (section_id, resource_type)"
+    )
+
+    cursor.execute(
+        """
+    CREATE TABLE IF NOT EXISTS attachments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        canonical_key TEXT NOT NULL UNIQUE,
+        attachment_id TEXT,
+        resource_id INTEGER NOT NULL,
+        section_id TEXT NOT NULL,
+        parent_schoology_id TEXT NOT NULL,
+        parent_resource_type TEXT NOT NULL,
+        attachment_kind TEXT NOT NULL,
+        title TEXT,
+        filename TEXT,
+        url TEXT,
+        mime_type TEXT,
+        filesize INTEGER,
+        metadata_json TEXT NOT NULL,
+        metadata_hash TEXT NOT NULL,
+        downloaded_path TEXT,
+        download_hash TEXT,
+        first_seen_at TIMESTAMP NOT NULL,
+        last_seen_at TIMESTAMP NOT NULL,
+        deleted_at TIMESTAMP,
+        FOREIGN KEY (resource_id) REFERENCES section_resources (resource_id) ON DELETE CASCADE
+    )
+    """
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_attachments_section_id "
+        "ON attachments (section_id)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_attachments_resource_id "
+        "ON attachments (resource_id)"
+    )
+
+    conn.commit()
+    conn.close()
+
+    storage_root = Config.SCRAPER_STORAGE_ROOT
+    if storage_root:
+        import os
+        os.makedirs(storage_root, exist_ok=True)
 
 
 def migrate_schoology_tokens(cursor: sqlite3.Cursor) -> None:

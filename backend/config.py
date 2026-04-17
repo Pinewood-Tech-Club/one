@@ -105,6 +105,7 @@ class Config:
     # Database paths
     MAIN_DB_PATH = "main.db"
     SESSIONS_DB_PATH = "api_sessions.db"
+    SCRAPER_DB_PATH = os.environ.get("SCRAPER_DB_PATH", str(BACKEND_ROOT / "scraper.db"))
 
     # Convex configuration
     CONVEX_URL = os.environ.get("CONVEX_URL", "http://127.0.0.1:3210")
@@ -161,6 +162,30 @@ class Config:
         os.environ.get("BANNER_UPCOMING_CACHE_TTL_SECONDS", "86400")
     )
 
+    # Scraper configuration
+    SCRAPER_SYNC_INTERVAL_MINUTES = int(os.environ.get("SCRAPER_SYNC_INTERVAL_MINUTES", "10"))
+    SCRAPER_MAX_SECTION_CONCURRENCY = int(os.environ.get("SCRAPER_MAX_SECTION_CONCURRENCY", "2"))
+    SCRAPER_MULTIGET_BATCH_SIZE = int(os.environ.get("SCRAPER_MULTIGET_BATCH_SIZE", "50"))
+    SCRAPER_LEASE_STALE_SECONDS = int(os.environ.get("SCRAPER_LEASE_STALE_SECONDS", "1800"))
+    SCRAPER_HEARTBEAT_SECONDS = int(os.environ.get("SCRAPER_HEARTBEAT_SECONDS", "30"))
+    SCRAPER_SECTION_MAX_RETRIES = int(os.environ.get("SCRAPER_SECTION_MAX_RETRIES", "3"))
+    SCRAPER_STORAGE_ROOT = os.environ.get(
+        "SCRAPER_STORAGE_ROOT",
+        str(BACKEND_ROOT / "storage" / "schoology"),
+    )
+    GOOGLE_DRIVE_TOKEN_FILE = os.environ.get(
+        "GOOGLE_DRIVE_TOKEN_FILE",
+        str(KEYS_DIR / "google_drive_token.json"),
+    )
+    GOOGLE_DRIVE_CLIENT_SECRET_FILE = os.environ.get(
+        "GOOGLE_DRIVE_CLIENT_SECRET_FILE",
+        str(KEYS_DIR / "google_drive_client_secret.json"),
+    )
+    GOOGLE_DRIVE_ENABLE_INTERACTIVE_AUTH = os.environ.get(
+        "GOOGLE_DRIVE_ENABLE_INTERACTIVE_AUTH",
+        "0",
+    ).strip().lower() in {"1", "true", "yes", "on"}
+
     @classmethod
     def is_production(cls) -> bool:
         return cls.ENVIRONMENT == "production"
@@ -180,4 +205,11 @@ class Config:
                 "WARNING: Convex bridge secret is not configured. "
                 "Backend-triggered Convex internal updates will fail until "
                 "CONVEX_BRIDGE_SECRET or CHAT_INTERNAL_SECRET is set in both backend and Convex."
+            )
+
+        if not Path(cls.GOOGLE_DRIVE_TOKEN_FILE).exists():
+            print(
+                "INFO: Google Drive scraper token not found. "
+                "Google Drive link attachments will stay metadata-only until "
+                "GOOGLE_DRIVE_TOKEN_FILE is provisioned."
             )

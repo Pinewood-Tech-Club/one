@@ -49,3 +49,7 @@ backend/**/.idea/
 backend/**/*.swp
 backend/**/*.swo
 backend/**/*~
+
+
+# Backend storage
+backend/storage/

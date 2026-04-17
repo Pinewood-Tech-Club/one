@@ -26,6 +26,15 @@ def get_user(convex_url: str, user_id: str) -> dict | None:
     return _action("getUserByUserId", {"userId": user_id})
 
 
+def list_eligible_scraper_users(convex_url: str) -> list[dict]:
+    """
+    List users currently eligible to act as scraper credential sources.
+    """
+    _ = convex_url
+    result = _action("listEligibleScraperUsers", {})
+    return result if isinstance(result, list) else []
+
+
 def update_onboarding_step(convex_url: str, user_id: str, step: str) -> dict:
     """
     Update user's onboarding step.
