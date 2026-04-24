@@ -3,9 +3,15 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { usePathname } from 'next/navigation';
 import { useQuery, useMutation } from 'convex/react';
+import { ChevronUp, BadgePlus, MessageCircleMore, Check, Plus } from 'lucide-react';
 import { api } from '../../../../convex/_generated/api';
 import type { Id } from '../../../../convex/_generated/dataModel';
 import { useConvexAuthReady } from '@/components/ConvexClientProvider';
+import ReactMarkdown from 'react-markdown';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import remarkGfm from 'remark-gfm';
+import rehypeHighlight from 'rehype-highlight';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -15,6 +21,8 @@ type StreamingState = {
   activity: string | null;
   generationId: Id<'chatGenerations'>;
 } | null;
+
+type Thread = { _id: Id<'chatThreads'>; title: string; lastMessageAt: number };
 
 function normalizePathname(pathname: string): string {
   if (pathname.length > 1 && pathname.endsWith('/')) {
@@ -26,6 +34,11 @@ function normalizePathname(pathname: string): string {
 
 function getChatUrl(threadId: Id<'chatThreads'> | null): string {
   return threadId ? `/chat/#${threadId}` : '/chat/';
+}
+
+function truncateThreadName(name: string): string {
+  if (name.length <= 36) return name;
+  return `${name.slice(0, 16)}…${name.slice(-16)}`;
 }
 
 // ── SSE parsing hook ──────────────────────────────────────────────────────────
@@ -97,64 +110,12 @@ function useSSEStream(
   }, [generationId]);
 }
 
-// ── Thread sidebar ────────────────────────────────────────────────────────────
-
-function ThreadSidebar({
-  threads,
-  selectedId,
-  onSelect,
-  onNewChat,
-}: {
-  threads: Array<{ _id: Id<'chatThreads'>; title: string; lastMessageAt: number }> | undefined;
-  selectedId: Id<'chatThreads'> | null;
-  onSelect: (id: Id<'chatThreads'>) => void;
-  onNewChat: () => void;
-}) {
-  return (
-    <div className="flex flex-col w-64 shrink-0 border-r border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 h-full">
-      <div className="p-3 border-b border-zinc-200 dark:border-zinc-700">
-        <button
-          onClick={onNewChat}
-          className="w-full py-2 px-3 rounded-lg bg-green-800 hover:bg-green-700 text-white text-sm font-medium transition-colors"
-        >
-          + New Chat
-        </button>
-      </div>
-      <div className="flex-1 overflow-y-auto py-2">
-        {threads === undefined && (
-          <div className="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400 animate-pulse">
-            Loading threads...
-          </div>
-        )}
-        {threads?.length === 0 && (
-          <div className="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400">
-            No conversations yet
-          </div>
-        )}
-        {threads?.map((thread) => (
-          <button
-            key={thread._id}
-            onClick={() => onSelect(thread._id)}
-            className={`w-full text-left px-3 py-2 mx-1 rounded-lg text-sm transition-colors truncate ${
-              selectedId === thread._id
-                ? 'bg-green-800 text-white'
-                : 'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-800'
-            }`}
-          >
-            {thread.title}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 // ── Status indicator ──────────────────────────────────────────────────────────
 
 function StatusPill({ activity, status }: { activity: string | null; status: string }) {
   if (status === 'queued') {
     return (
-      <span className="inline-flex items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400">
+      <span className="inline-flex items-center gap-1.5 text-xs text-zinc-500">
         <span className="w-1.5 h-1.5 rounded-full bg-zinc-400 animate-pulse" />
         Waiting...
       </span>
@@ -162,7 +123,7 @@ function StatusPill({ activity, status }: { activity: string | null; status: str
   }
   if (activity === 'thinking' || activity === 'post_tool_reasoning') {
     return (
-      <span className="inline-flex items-center gap-1.5 text-xs text-violet-600 dark:text-violet-400 font-medium">
+      <span className="inline-flex items-center gap-1.5 text-xs text-violet-600 font-medium">
         <span className="flex gap-0.5">
           {[0, 1, 2].map((i) => (
             <span
@@ -179,39 +140,310 @@ function StatusPill({ activity, status }: { activity: string | null; status: str
   return null;
 }
 
-// ── Message bubble ────────────────────────────────────────────────────────────
+// ── Message renderers ─────────────────────────────────────────────────────────
 
-function MessageBubble({
-  role,
+function UserMessage({ content }: { content: string }) {
+  return (
+    <div className="flex w-full justify-end">
+      <div className="bg-green-800 text-white rounded-[24px] px-4 py-3 max-w-[67%] text-[15px] leading-relaxed whitespace-pre-wrap break-words text-left">
+        {content}
+      </div>
+    </div>
+  );
+}
+
+const mdComponents: React.ComponentProps<typeof ReactMarkdown>['components'] = {
+  // Paragraphs — no extra margin at top, tight gap between
+  p: ({ children }) => (
+    <p className="mb-3 last:mb-0 leading-relaxed">{children}</p>
+  ),
+  // Headings
+  h1: ({ children }) => (
+    <h1 className="text-xl font-semibold mt-5 mb-2 first:mt-0">{children}</h1>
+  ),
+  h2: ({ children }) => (
+    <h2 className="text-lg font-semibold mt-4 mb-2 first:mt-0">{children}</h2>
+  ),
+  h3: ({ children }) => (
+    <h3 className="text-base font-semibold mt-3 mb-1 first:mt-0">{children}</h3>
+  ),
+  // Lists
+  ul: ({ children }) => (
+    <ul className="list-disc list-outside pl-5 mb-3 space-y-0.5 last:mb-0">{children}</ul>
+  ),
+  ol: ({ children }) => (
+    <ol className="list-decimal list-outside pl-5 mb-3 space-y-0.5 last:mb-0">{children}</ol>
+  ),
+  li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+  // Blockquote
+  blockquote: ({ children }) => (
+    <blockquote className="border-l-2 border-zinc-300 pl-4 text-zinc-600 italic mb-3 last:mb-0">
+      {children}
+    </blockquote>
+  ),
+  // Inline code
+  code: ({ children, className }) => {
+    // Block code comes from pre > code and has a className like "language-xxx"
+    if (className) return <code className={className}>{children}</code>;
+    return (
+      <code className="bg-zinc-100 text-zinc-800 rounded px-1 py-0.5 text-[13px] font-mono">
+        {children}
+      </code>
+    );
+  },
+  // Code block wrapper
+  pre: ({ children }) => (
+    <pre className="bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-3 overflow-x-auto mb-3 last:mb-0 text-[13px] leading-relaxed">
+      {children}
+    </pre>
+  ),
+  // Horizontal rule
+  hr: () => <hr className="border-zinc-200 my-4" />,
+  // Links
+  a: ({ href, children }) => (
+    <a href={href} target="_blank" rel="noopener noreferrer" className="text-green-700 underline underline-offset-2 hover:text-green-900">
+      {children}
+    </a>
+  ),
+  // Strong / em
+  strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+  em: ({ children }) => <em className="italic">{children}</em>,
+  // Tables (GFM)
+  table: ({ children }) => (
+    <div className="overflow-x-auto mb-3 last:mb-0">
+      <table className="w-full text-sm border-collapse">{children}</table>
+    </div>
+  ),
+  thead: ({ children }) => <thead className="border-b border-zinc-200">{children}</thead>,
+  tbody: ({ children }) => <tbody>{children}</tbody>,
+  tr: ({ children }) => <tr className="border-b border-zinc-100 last:border-0">{children}</tr>,
+  th: ({ children }) => (
+    <th className="text-left font-semibold px-3 py-2 first:pl-0 last:pr-0">{children}</th>
+  ),
+  td: ({ children }) => (
+    <td className="px-3 py-2 first:pl-0 last:pr-0 align-top">{children}</td>
+  ),
+};
+
+function MarkdownContent({ content }: { content: string }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm, remarkMath]}
+      rehypePlugins={[rehypeKatex, rehypeHighlight]}
+      components={mdComponents}
+    >
+      {content}
+    </ReactMarkdown>
+  );
+}
+
+function AssistantMessage({
   content,
   streaming,
   activity,
   status,
 }: {
-  role: 'user' | 'assistant';
   content: string;
   streaming?: boolean;
   activity?: string | null;
   status?: string;
 }) {
-  const isUser = role === 'user';
+  return (
+    <div className="w-full text-black text-[15px] text-left">
+      {content && <MarkdownContent content={content} />}
+      {streaming && status === 'streaming' && activity === 'streaming_text' && (
+        <span className="inline-block w-0.5 h-3.5 bg-current ml-0.5 animate-pulse align-middle" />
+      )}
+      {streaming && (!content || activity !== 'streaming_text') && (
+        <StatusPill activity={activity ?? null} status={status ?? 'queued'} />
+      )}
+    </div>
+  );
+}
+
+// ── Composer ──────────────────────────────────────────────────────────────────
+
+function Composer({
+  threads,
+  selectedThreadId,
+  onSelectThread,
+  onNewChat,
+  inputValue,
+  setInputValue,
+  onSend,
+  disabled,
+}: {
+  threads: Thread[] | undefined;
+  selectedThreadId: Id<'chatThreads'> | null;
+  onSelectThread: (id: Id<'chatThreads'>) => void;
+  onNewChat: () => void;
+  inputValue: string;
+  setInputValue: (v: string) => void;
+  onSend: () => void;
+  disabled: boolean;
+}) {
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Auto-resize textarea
+  useEffect(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.style.height = 'auto';
+    ta.style.height = `${Math.min(ta.scrollHeight, 160)}px`;
+  }, [inputValue]);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    if (!dropdownOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (!dropdownRef.current?.contains(e.target as Node)) {
+        setDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [dropdownOpen]);
+
+  const selectedThread = threads?.find((t) => t._id === selectedThreadId);
+  const otherThreads = (threads ?? []).filter((t) => t._id !== selectedThreadId);
+  const currentLabel = selectedThread
+    ? truncateThreadName(selectedThread.title)
+    : 'New chat';
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      onSend();
+    }
+  };
+
+  const showTrigger = !dropdownOpen || !!selectedThread;
 
   return (
-    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-4`}>
-      <div
-        className={`max-w-[75%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap ${
-          isUser
-            ? 'bg-green-800 text-white rounded-br-sm'
-            : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 rounded-bl-sm'
-        }`}
-      >
-        {content}
-        {streaming && status === 'streaming' && activity === 'streaming_text' && (
-          <span className="inline-block w-0.5 h-3.5 bg-current ml-0.5 animate-pulse align-middle" />
-        )}
-        {streaming && (!content || activity !== 'streaming_text') && (
-          <StatusPill activity={activity ?? null} status={status ?? 'queued'} />
-        )}
+    <div
+      ref={dropdownRef}
+      className="fixed bottom-4 left-1/2 -translate-x-1/2 w-[840px] max-w-[calc(100vw-32px)] bg-[#166534] rounded-[24px] p-[4px] flex flex-col gap-[4px] shadow-lg z-20"
+    >
+      {/* Top row: thread pill (morphs hug↔fill) + new-chat button.
+          flex-grow on the pill transitions 0 → 1; an invisible spacer
+          does the inverse so the + button stays pinned to the right.
+          gap-[4px] keeps a fixed breathing room between pill and +. */}
+      <div className="flex items-end w-full gap-[4px]">
+        <div
+          className="bg-white text-[#166534] rounded-tl-[20px] rounded-tr-[20px] overflow-hidden min-w-0 flex flex-col transition-[flex-grow] duration-300 ease-out"
+          style={{ flexGrow: dropdownOpen ? 1 : 0, flexShrink: 0, flexBasis: 'auto' }}
+        >
+          {/* Trigger row wrapped in a grid-rows height animator. Collapses
+              to 0 when opening a new-chat state ("fades out to reveal the
+              chat selector"). No `contain` here — the trigger's intrinsic
+              width must flow up to the pill so it hugs the trigger width
+              in the closed state. */}
+          <div
+            className={`grid transition-[grid-template-rows] duration-300 ease-out ${
+              showTrigger ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
+            }`}
+          >
+            <div className="overflow-hidden min-h-0">
+              <button
+                type="button"
+                onClick={() => setDropdownOpen((o) => !o)}
+                className={`w-full flex items-center gap-[10px] px-[12px] py-[8px] text-[18px] leading-none whitespace-nowrap hover:bg-black/[0.02] transition-colors ${
+                  dropdownOpen && otherThreads.length > 0 ? 'border-b border-[#676767]' : ''
+                }`}
+              >
+                <span className="flex-1 text-left min-w-0 truncate">
+                  {currentLabel}
+                </span>
+                <span className="relative w-4 h-4 shrink-0">
+                  <ChevronUp
+                    className={`absolute inset-0 w-4 h-4 transition-opacity duration-200 ${
+                      dropdownOpen ? 'opacity-0' : 'opacity-100'
+                    }`}
+                    strokeWidth={2}
+                  />
+                  {selectedThread && (
+                    <Check
+                      className={`absolute inset-0 w-4 h-4 transition-opacity duration-200 ${
+                        dropdownOpen ? 'opacity-100' : 'opacity-0'
+                      }`}
+                      strokeWidth={2}
+                    />
+                  )}
+                </span>
+              </button>
+            </div>
+          </div>
+
+          {/* Expanded rows wrapped in a grid-rows height animator.
+              `contain: inline-size` isolates the list's intrinsic inline
+              size (== 0) from the pill, so hidden rows with long thread
+              names can't fatten the closed pill. */}
+          <div
+            className={`grid transition-[grid-template-rows] duration-300 ease-out ${
+              dropdownOpen ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
+            }`}
+            style={{ contain: 'inline-size' }}
+          >
+            <div className="overflow-hidden min-h-0 flex flex-col">
+              {otherThreads.length === 0 && !selectedThread && (
+                <div className="px-[12px] py-[8px] text-[18px] text-[#676767] font-extralight">
+                  No conversations yet
+                </div>
+              )}
+              {otherThreads.map((t, idx) => (
+                <button
+                  key={t._id}
+                  type="button"
+                  onClick={() => {
+                    onSelectThread(t._id);
+                    setDropdownOpen(false);
+                  }}
+                  className={`text-left px-[12px] py-[8px] text-[18px] text-[#676767] font-extralight whitespace-nowrap hover:bg-black/[0.02] truncate ${
+                    idx < otherThreads.length - 1 ? 'border-b border-[#676767]' : ''
+                  }`}
+                >
+                  {truncateThreadName(t.title)}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Spacer that fills the row when the pill is hugged. */}
+        <div
+          className="transition-[flex-grow] duration-300 ease-out"
+          style={{ flexGrow: dropdownOpen ? 0 : 1, flexShrink: 1, flexBasis: 0 }}
+          aria-hidden
+        />
+
+        {/* New chat button — matches the trigger's structure (text-[18px],
+            gap-[10px], w-4 h-4 icon) so its box height equals the pill's. */}
+        <button
+          type="button"
+          onClick={onNewChat}
+          aria-label="New chat"
+          className="bg-white text-[#166534] rounded-tl-[20px] rounded-tr-[20px] px-[12px] py-[8px] flex items-center justify-center transition-colors shrink-0 self-end"
+        >
+          <Plus className="w-[18px] h-[18px]" strokeWidth={2} />
+        </button>
+      </div>
+
+      {/* Textarea */}
+      <div className="bg-white rounded-bl-[20px] rounded-br-[20px] pt-[10px] pb-[12px] px-[16px] flex items-start">
+        <textarea
+          ref={textareaRef}
+          value={inputValue}
+          onChange={(e) => setInputValue(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onFocus={() => setDropdownOpen(false)}
+          onMouseDown={() => setDropdownOpen(false)}
+          placeholder="What do you want to know?"
+          rows={1}
+          disabled={disabled}
+          className="flex-1 resize-none bg-transparent text-[18px] text-black placeholder:text-[#676767] outline-none min-h-[26px] max-h-[160px] leading-normal disabled:opacity-50"
+        />
       </div>
     </div>
   );
@@ -229,7 +461,6 @@ export default function ChatPage() {
   const [streaming, setStreaming] = useState<StreamingState>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const authReady = useConvexAuthReady();
   const threads = useQuery(api.chat.listThreads, authReady ? {} : 'skip');
@@ -245,7 +476,6 @@ export default function ChatPage() {
   const sendMessageMutation = useMutation(api.chat.sendMessage);
   const requestCancelMutation = useMutation(api.chat.requestCancel);
 
-  // SSE handlers (stable refs to avoid restarting stream on re-render)
   const onSnapshot = useCallback((data: Record<string, unknown>) => {
     setStreaming((prev) =>
       prev
@@ -281,12 +511,9 @@ export default function ChatPage() {
 
   useSSEStream(streaming?.generationId ?? null, onSnapshot, onDelta, onTerminal);
 
-  // Bootstrap streaming state from Convex if we arrive on a thread mid-generation
-  // (e.g. opening on another device while a generation is in progress)
   useEffect(() => {
     if (!activeGeneration) return;
     if (streaming) {
-      // Already tracking — just sync activity/status from heartbeats
       setStreaming((prev) =>
         prev
           ? {
@@ -297,7 +524,6 @@ export default function ChatPage() {
           : null,
       );
     } else {
-      // Not tracking yet — connect to the SSE stream for this generation
       setStreaming({
         content: '',
         status: activeGeneration.status,
@@ -305,18 +531,16 @@ export default function ChatPage() {
         generationId: activeGeneration._id,
       });
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeGeneration?._id, activeGeneration?.activity, activeGeneration?.status]);
 
-  // Clear streaming when Convex says generation is gone
   useEffect(() => {
     if (activeGeneration === null && streaming) {
       setStreaming(null);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeGeneration]);
 
-  // Read hash on mount to restore selected thread
   useEffect(() => {
     if (normalizePathname(window.location.pathname) === '/chat') {
       const hash = window.location.hash.slice(1);
@@ -326,25 +550,15 @@ export default function ChatPage() {
     setHashInitialized(true);
   }, []);
 
-  // Sync selected thread to URL hash
   useEffect(() => {
     if (!hashInitialized || !isChatRoute) return;
 
     window.history.replaceState(null, '', getChatUrl(selectedThreadId));
   }, [hashInitialized, isChatRoute, selectedThreadId]);
 
-  // Auto-scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, streaming?.content]);
-
-  // Auto-resize textarea
-  useEffect(() => {
-    const ta = textareaRef.current;
-    if (!ta) return;
-    ta.style.height = 'auto';
-    ta.style.height = `${Math.min(ta.scrollHeight, 160)}px`;
-  }, [inputValue]);
 
   const handleSend = async () => {
     const content = inputValue.trim();
@@ -375,11 +589,9 @@ export default function ChatPage() {
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
+  const handleSelectThread = (id: Id<'chatThreads'>) => {
+    setSelectedThreadId(id);
+    setStreaming(null);
   };
 
   const handleNewChat = () => {
@@ -388,8 +600,6 @@ export default function ChatPage() {
     setInputValue('');
   };
 
-  // Skip the queued/streaming assistant message from Convex while we have
-  // a live streaming bubble — avoids duplication
   const visibleMessages = messages?.filter((msg) => {
     if (streaming && msg.role === 'assistant' && msg.status !== 'completed') return false;
     return true;
@@ -399,120 +609,77 @@ export default function ChatPage() {
   const canCancel =
     streaming && activeGeneration && !activeGeneration.cancelRequested;
 
-  return (
-    <div className="flex h-screen pt-[56px] bg-white dark:bg-zinc-950 text-black dark:text-white">
-      {/* Sidebar */}
-      <ThreadSidebar
-        threads={threads}
-        selectedId={selectedThreadId}
-        onSelect={(id) => {
-          setSelectedThreadId(id);
-          setStreaming(null);
-        }}
-        onNewChat={handleNewChat}
-      />
+  const hasContent = selectedThreadId || streaming;
+  const notEntitled = threads === null;
 
-      {/* Main area */}
-      <div className="flex flex-col flex-1 min-w-0">
-        {/* Empty state */}
-        {!selectedThreadId && !streaming && (
-          <div className="flex-1 flex flex-col items-center justify-center gap-3 text-zinc-400 dark:text-zinc-600">
-            <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={1.5}
-                d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"
-              />
-            </svg>
-            <p className="text-sm">Select a conversation or start a new one</p>
-          </div>
-        )}
-
-        {/* Messages */}
-        {(selectedThreadId || streaming) && (
-          <div className="flex-1 overflow-y-auto px-4 py-6">
-            <div className="max-w-2xl mx-auto">
-              {messages === undefined && (
-                <div className="text-center text-sm text-zinc-400 animate-pulse py-8">
-                  Loading messages...
-                </div>
-              )}
-
-              {visibleMessages?.map((msg) => (
-                <MessageBubble
-                  key={msg._id}
-                  role={msg.role as 'user' | 'assistant'}
-                  content={msg.content}
-                  status={msg.status}
-                />
-              ))}
-
-              {/* Live streaming bubble */}
-              {streaming && (
-                <MessageBubble
-                  role="assistant"
-                  content={streaming.content}
-                  streaming
-                  activity={streaming.activity}
-                  status={streaming.status}
-                />
-              )}
-
-              <div ref={messagesEndRef} />
-            </div>
-          </div>
-        )}
-
-        {/* Input bar */}
-        <div className="border-t border-zinc-200 dark:border-zinc-800 px-4 py-3">
-          <div className="max-w-2xl mx-auto">
-            {canCancel && (
-              <div className="flex justify-center mb-2">
-                <button
-                  onClick={() =>
-                    requestCancelMutation({ generationId: streaming.generationId })
-                  }
-                  className="text-xs text-zinc-500 hover:text-red-500 dark:text-zinc-400 dark:hover:text-red-400 underline transition-colors"
-                >
-                  Stop generating
-                </button>
-              </div>
-            )}
-
-            <div className="flex items-end gap-2 rounded-2xl border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-2">
-              <textarea
-                ref={textareaRef}
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Message..."
-                rows={1}
-                disabled={isSending}
-                className="flex-1 resize-none bg-transparent text-sm outline-none placeholder-zinc-400 dark:placeholder-zinc-600 py-1 disabled:opacity-50 min-h-[28px] max-h-[160px]"
-              />
-              <button
-                onClick={handleSend}
-                disabled={!inputValue.trim() || isSending || isGenerating}
-                className="shrink-0 w-8 h-8 flex items-center justify-center rounded-full bg-green-800 hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                aria-label="Send message"
-              >
-                <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M5 12h14M12 5l7 7-7 7"
-                  />
-                </svg>
-              </button>
-            </div>
-            <p className="text-center text-xs text-zinc-400 dark:text-zinc-600 mt-2">
-              Enter to send · Shift+Enter for newline
-            </p>
-          </div>
-        </div>
+  if (notEntitled) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen gap-3 text-zinc-400">
+        <MessageCircleMore className="w-12 h-12" strokeWidth={1.5} />
+        <p className="text-sm">Chat isn't available for your account yet.</p>
       </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen pt-[72px] pb-[220px] bg-white text-black">
+      <div className="mx-auto w-full max-w-[840px] px-4 flex flex-col gap-5">
+        {!hasContent && (
+          <div className="flex flex-col items-center justify-center gap-3 text-zinc-400 pt-32">
+            <MessageCircleMore className="w-12 h-12" strokeWidth={1.5} />
+            <p className="text-sm">if you're reading this adam forgot to actually write something here lmao</p>
+          </div>
+        )}
+
+        {hasContent && messages === undefined && (
+          <div className="text-center text-sm text-zinc-400 animate-pulse py-8">
+            Loading messages...
+          </div>
+        )}
+
+        {visibleMessages?.map((msg) =>
+          msg.role === 'user' ? (
+            <UserMessage key={msg._id} content={msg.content} />
+          ) : (
+            <AssistantMessage key={msg._id} content={msg.content} status={msg.status} />
+          ),
+        )}
+
+        {streaming && (
+          <AssistantMessage
+            content={streaming.content}
+            streaming
+            activity={streaming.activity}
+            status={streaming.status}
+          />
+        )}
+
+        <div ref={messagesEndRef} />
+      </div>
+
+      {canCancel && (
+        <div className="fixed bottom-[200px] left-1/2 -translate-x-1/2 z-30">
+          <button
+            onClick={() =>
+              requestCancelMutation({ generationId: streaming.generationId })
+            }
+            className="px-3 py-1.5 rounded-full bg-white border border-zinc-300 text-xs text-zinc-600 hover:text-red-500 hover:border-red-300 shadow-sm transition-colors"
+          >
+            Stop generating
+          </button>
+        </div>
+      )}
+
+      <Composer
+        threads={threads}
+        selectedThreadId={selectedThreadId}
+        onSelectThread={handleSelectThread}
+        onNewChat={handleNewChat}
+        inputValue={inputValue}
+        setInputValue={setInputValue}
+        onSend={handleSend}
+        disabled={isSending || isGenerating}
+      />
     </div>
   );
 }

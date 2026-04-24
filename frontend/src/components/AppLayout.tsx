@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Component } from 'react';
+import type { ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
 import { LoadingProvider, useLoading } from '@/context/LoadingContext';
 import { UserProvider } from '@/context/UserContext';
@@ -15,6 +16,21 @@ import { useQuery } from 'convex/react';
 import { api } from '../../convex/_generated/api';
 import posthog from 'posthog-js';
 import { CalendarDays, ChartNoAxesColumnIncreasing, Flag, MessageCircleMore } from 'lucide-react';
+
+class ChatErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state = { error: null };
+  static getDerivedStateFromError(error: Error) { return { error }; }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="flex items-center justify-center min-h-screen text-zinc-400 text-sm">
+          Chat is not available for your account.
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 type Page = 'upcoming' | 'progress' | 'activities' | 'chat' | 'user';
 
@@ -147,7 +163,7 @@ function AppLayoutInner() {
             <div style={{ display: currentPage === 'upcoming'   ? 'block' : 'none' }}><UpcomingPage /></div>
             <div style={{ display: currentPage === 'progress'   ? 'block' : 'none' }}><GradesPage /></div>
             <div style={{ display: currentPage === 'activities' ? 'block' : 'none' }}><SchedulePage /></div>
-            <div style={{ display: currentPage === 'chat'       ? 'block' : 'none' }}><ChatPage /></div>
+            <div style={{ display: currentPage === 'chat'       ? 'block' : 'none' }}><ChatErrorBoundary><ChatPage /></ChatErrorBoundary></div>
             <div style={{ display: currentPage === 'user'       ? 'block' : 'none' }}><UserPage /></div>
           </div>
         </div>
