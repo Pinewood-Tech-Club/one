@@ -8,7 +8,7 @@
 # Backend
 backend/env/
 backend/.env
-backend/*.db*
+*.db*
 **/__pycache__/
 backend/research/
 backend/chroma_db/

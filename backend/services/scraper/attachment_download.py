@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 from config import Config
 from services.schoology.client import SchoologyService
 
+from .extraction import extract_attachment_text_if_needed
 from . import store
 from .google_drive import download_google_drive_link_if_needed, google_drive_url_info
 
@@ -126,4 +127,10 @@ def download_attachment_if_needed(
     blob_dir.mkdir(parents=True, exist_ok=True)
     blob_path = blob_dir / safe_filename
     blob_path.write_bytes(content)
+    extract_attachment_text_if_needed(
+        attachment_dir=attachment_dir,
+        downloaded_path=blob_path,
+        download_hash=download_hash,
+        mime_type=content_type or attachment.get("mime_type"),
+    )
     return str(blob_path), download_hash

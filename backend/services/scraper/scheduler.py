@@ -8,6 +8,7 @@ from pathlib import Path
 import secrets
 import subprocess
 import sys
+import time
 from typing import Any
 
 from config import Config
@@ -97,6 +98,10 @@ def _spawn_section_worker(section_id: str, credential_user_id: int, owner_token:
             owner_token,
         ],
         cwd=str(BACKEND_ROOT),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
     )
 
 
@@ -142,13 +147,31 @@ def run_scheduler_once() -> dict[str, Any]:
     return summary
 
 
+def run_scheduler_loop(*, poll_seconds: int | None = None) -> None:
+    interval = max(5, int(poll_seconds or Config.SCRAPER_SCHEDULER_POLL_SECONDS))
+    logger.info("scraper_scheduler_loop_start poll_seconds=%s", interval)
+    while True:
+        started_at = time.monotonic()
+        try:
+            run_scheduler_once()
+        except Exception:
+            logger.exception("scraper_scheduler_loop_iteration_failed")
+
+        elapsed = time.monotonic() - started_at
+        sleep_for = max(1.0, interval - elapsed)
+        time.sleep(sleep_for)
+
+
 def main(argv: list[str]) -> int:
     logging.basicConfig(level=logging.INFO)
-    if len(argv) != 2 or argv[1] != "--once":
-        print("Usage: python -m services.scraper.scheduler --once", file=sys.stderr)
+    if len(argv) != 2 or argv[1] not in {"--once", "--loop"}:
+        print("Usage: python -m services.scraper.scheduler --once|--loop", file=sys.stderr)
         return 2
 
-    run_scheduler_once()
+    if argv[1] == "--once":
+        run_scheduler_once()
+    else:
+        run_scheduler_loop()
     return 0
 
 

@@ -268,6 +268,7 @@ def _sync_resource_batch(
     payloads: list[dict[str, Any]],
     service,
     now: datetime,
+    owner_token: str,
 ) -> tuple[int, int, set[str], set[str]]:
     changed_count = 0
     total_count = 0
@@ -275,6 +276,8 @@ def _sync_resource_batch(
     seen_attachment_keys: set[str] = set()
 
     for payload in payloads:
+        if total_count % 25 == 0:
+            store.heartbeat_section_run(section_id, owner_token, store.utcnow())
         schoology_id = _resource_schoology_id(payload, resource_type)
         seen_resource_ids.add(schoology_id)
 
@@ -332,6 +335,7 @@ def _sync_resource_batch(
                 metadata_hash=attachment["metadata_hash"],
                 now=now,
             )
+            store.heartbeat_section_run(section_id, owner_token, store.utcnow())
             should_download = _should_attempt_attachment_download(attachment, attachment_result)
             try:
                 downloaded_path, download_hash = download_attachment_if_needed(
@@ -350,6 +354,7 @@ def _sync_resource_batch(
                     attachment["attachment_key"],
                 )
                 continue
+            store.heartbeat_section_run(section_id, owner_token, store.utcnow())
             if downloaded_path or download_hash or (
                 attachment_result["changed"] and attachment["attachment_kind"] != "file"
             ):
@@ -387,6 +392,7 @@ def run_section_sync(section_id: str, credential_user_id: int, owner_token: str)
         payloads=assignments,
         service=service,
         now=store.utcnow(),
+        owner_token=owner_token,
     )
     store.heartbeat_section_run(section_id, owner_token, store.utcnow())
 
@@ -396,6 +402,7 @@ def run_section_sync(section_id: str, credential_user_id: int, owner_token: str)
         payloads=documents,
         service=service,
         now=store.utcnow(),
+        owner_token=owner_token,
     )
     store.heartbeat_section_run(section_id, owner_token, store.utcnow())
 

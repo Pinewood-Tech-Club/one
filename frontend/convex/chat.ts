@@ -5,6 +5,7 @@ import { internal } from "./_generated/api";
 import { mutation, query } from "./_generated/server";
 import {
   buildUntitledThreadTitle,
+  getChatEntitledUser,
   getActiveGenerationForThread,
   getGenerationByClientRequestId,
   getOwnedGenerationOrThrow,
@@ -15,11 +16,12 @@ import {
 export const listThreads = query({
   args: {},
   handler: async (ctx) => {
-    const { identity } = await requireChatEntitledUser(ctx);
+    const entitled = await getChatEntitledUser(ctx);
+    if (!entitled) return null;
 
     return ctx.db
       .query("chatThreads")
-      .withIndex("by_user_updated", (q) => q.eq("userId", identity.userId))
+      .withIndex("by_user_updated", (q) => q.eq("userId", entitled.identity.userId))
       .order("desc")
       .collect()
       .then((threads) => threads.filter((thread) => thread.archivedAt === undefined));
@@ -41,8 +43,9 @@ export const listMessages = query({
     threadId: v.id("chatThreads"),
   },
   handler: async (ctx, args) => {
-    const { identity } = await requireChatEntitledUser(ctx);
-    await getOwnedThreadOrThrow(ctx.db, args.threadId, identity.userId);
+    const entitled = await getChatEntitledUser(ctx);
+    if (!entitled) return null;
+    await getOwnedThreadOrThrow(ctx.db, args.threadId, entitled.identity.userId);
 
     return ctx.db
       .query("chatMessages")
@@ -56,8 +59,9 @@ export const getActiveGeneration = query({
     threadId: v.id("chatThreads"),
   },
   handler: async (ctx, args) => {
-    const { identity } = await requireChatEntitledUser(ctx);
-    await getOwnedThreadOrThrow(ctx.db, args.threadId, identity.userId);
+    const entitled = await getChatEntitledUser(ctx);
+    if (!entitled) return null;
+    await getOwnedThreadOrThrow(ctx.db, args.threadId, entitled.identity.userId);
     return getActiveGenerationForThread(ctx.db, args.threadId);
   },
 });

@@ -6,6 +6,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import re
 from typing import Any
 
 from config import Config
@@ -636,3 +637,286 @@ def tombstone_missing_attachments(section_id: str, seen_keys: set[str], now: dat
             (to_db_time(now), section_id),
         )
     conn.commit()
+
+
+def user_has_active_section_membership(user_id: int, section_id: str) -> bool:
+    conn = get_scraper_conn()
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM section_memberships
+        WHERE user_id = ? AND section_id = ? AND is_active = 1
+        LIMIT 1
+        """,
+        (user_id, section_id),
+    ).fetchone()
+    return bool(row)
+
+
+def list_section_resources(section_id: str, *, limit: int = 25) -> list[dict[str, Any]]:
+    conn = get_scraper_conn()
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM section_resources
+        WHERE section_id = ? AND deleted_at IS NULL
+        ORDER BY CASE WHEN due_at IS NULL THEN 1 ELSE 0 END, due_at ASC, last_seen_at DESC
+        LIMIT ?
+        """,
+        (section_id, limit),
+    ).fetchall()
+    return [_decode_resource_row(dict(row)) for row in rows]
+
+
+def get_section_resource(section_id: str, resource_type: str, schoology_id: str) -> dict[str, Any] | None:
+    conn = get_scraper_conn()
+    row = conn.execute(
+        """
+        SELECT *
+        FROM section_resources
+        WHERE section_id = ? AND resource_type = ? AND schoology_id = ? AND deleted_at IS NULL
+        LIMIT 1
+        """,
+        (section_id, resource_type, schoology_id),
+    ).fetchone()
+    if not row:
+        return None
+    return _decode_resource_row(dict(row))
+
+
+def list_resource_attachments(resource_id: int) -> list[dict[str, Any]]:
+    conn = get_scraper_conn()
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM attachments
+        WHERE resource_id = ? AND deleted_at IS NULL
+        ORDER BY last_seen_at DESC, id DESC
+        """,
+        (resource_id,),
+    ).fetchall()
+    return [_decode_attachment_row(dict(row)) for row in rows]
+
+
+def get_attachment_by_canonical_key(canonical_key: str) -> dict[str, Any] | None:
+    conn = get_scraper_conn()
+    row = conn.execute(
+        """
+        SELECT *
+        FROM attachments
+        WHERE canonical_key = ? AND deleted_at IS NULL
+        LIMIT 1
+        """,
+        (canonical_key,),
+    ).fetchone()
+    if not row:
+        return None
+    return _decode_attachment_row(dict(row))
+
+
+def list_active_sections_for_user(user_id: int) -> list[dict[str, Any]]:
+    conn = get_scraper_conn()
+    rows = conn.execute(
+        """
+        SELECT s.section_id, s.title, s.course_title
+        FROM section_memberships sm
+        INNER JOIN sections s ON s.section_id = sm.section_id
+        WHERE sm.user_id = ? AND sm.is_active = 1 AND s.deleted_at IS NULL
+        ORDER BY COALESCE(s.course_title, s.title, s.section_id) ASC
+        """,
+        (user_id,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def search_materials(
+    *,
+    section_ids: list[str],
+    query_terms: list[str],
+    limit: int,
+) -> list[dict[str, Any]]:
+    if not section_ids or not query_terms or limit <= 0:
+        return []
+
+    conn = get_scraper_conn()
+    normalized_terms = [term.strip().lower() for term in query_terms if term and term.strip()]
+    if not normalized_terms:
+        return []
+
+    section_placeholders = ",".join("?" for _ in section_ids)
+    term_predicates = " OR ".join(
+        [
+            "("
+            "LOWER(COALESCE(sr.title, '')) LIKE ? OR "
+            "LOWER(COALESCE(sr.description_preview, '')) LIKE ? OR "
+            "LOWER(COALESCE(sr.raw_json, '')) LIKE ? OR "
+            "LOWER(COALESCE(a.title, '')) LIKE ? OR "
+            "LOWER(COALESCE(a.filename, '')) LIKE ? OR "
+            "LOWER(COALESCE(a.metadata_json, '')) LIKE ?"
+            ")"
+            for _ in normalized_terms
+        ]
+    )
+
+    candidate_limit = min(max(limit * 20, 100), 500)
+
+    params: list[Any] = [*section_ids]
+    for term in normalized_terms:
+        like = f"%{term}%"
+        params.extend([like, like, like, like, like, like])
+    params.append(candidate_limit)
+
+    rows = conn.execute(
+        f"""
+        SELECT
+            sr.resource_id,
+            sr.section_id,
+            sr.schoology_id,
+            sr.resource_type,
+            sr.title,
+            sr.description_preview,
+            sr.due_at,
+            sr.raw_json,
+            a.canonical_key AS attachment_canonical_key,
+            a.title AS attachment_title,
+            a.filename AS attachment_filename,
+            a.attachment_kind,
+            a.mime_type
+        FROM section_resources sr
+        LEFT JOIN attachments a
+          ON a.resource_id = sr.resource_id
+         AND a.deleted_at IS NULL
+        WHERE sr.deleted_at IS NULL
+          AND sr.section_id IN ({section_placeholders})
+          AND ({term_predicates})
+        ORDER BY sr.last_seen_at DESC
+        LIMIT ?
+        """,
+        params,
+    ).fetchall()
+
+    by_resource: dict[int, dict[str, Any]] = {}
+    for row_obj in rows:
+        row = dict(row_obj)
+        resource_id = int(row["resource_id"])
+        entry = by_resource.get(resource_id)
+        if entry is None:
+            entry = {
+                "resource_id": resource_id,
+                "section_id": row["section_id"],
+                "schoology_id": row["schoology_id"],
+                "resource_type": row["resource_type"],
+                "title": row["title"],
+                "description_preview": row["description_preview"],
+                "due_at": row["due_at"],
+                "raw_payload": json.loads(row["raw_json"]) if row.get("raw_json") else None,
+                "attachments": [],
+                "matched_queries": [],
+            }
+            haystack = " ".join(
+                str(value or "")
+                for value in [
+                    row.get("title"),
+                    row.get("description_preview"),
+                    row.get("raw_json"),
+                ]
+            ).lower()
+            entry["matched_queries"] = [term for term in normalized_terms if term in haystack]
+            by_resource[resource_id] = entry
+
+        attachment_key = row.get("attachment_canonical_key")
+        if attachment_key:
+            attachment_entry = {
+                "canonical_key": attachment_key,
+                "title": row.get("attachment_title"),
+                "filename": row.get("attachment_filename"),
+                "attachment_kind": row.get("attachment_kind"),
+                "mime_type": row.get("mime_type"),
+            }
+            if attachment_entry not in entry["attachments"]:
+                entry["attachments"].append(attachment_entry)
+                attachment_haystack = " ".join(
+                    str(value or "")
+                    for value in [
+                        row.get("attachment_title"),
+                        row.get("attachment_filename"),
+                    ]
+                ).lower()
+                for term in normalized_terms:
+                    if term in attachment_haystack and term not in entry["matched_queries"]:
+                        entry["matched_queries"].append(term)
+
+    ranked = sorted(
+        by_resource.values(),
+        key=lambda item: (
+            -_search_result_score(item, normalized_terms),
+            item["due_at"] is None,
+            item["due_at"] or "",
+            str(item.get("title") or "").lower(),
+        ),
+    )
+    return ranked[:limit]
+
+
+def _search_result_score(item: dict[str, Any], normalized_terms: list[str]) -> int:
+    title = str(item.get("title") or "").strip().lower()
+    description = str(item.get("description_preview") or "").lower()
+    raw_payload = canonical_json(item.get("raw_payload") or {}).lower()
+    attachment_text = " ".join(
+        str(value or "").lower()
+        for attachment in item.get("attachments", [])
+        for value in (
+            attachment.get("title"),
+            attachment.get("filename"),
+        )
+    )
+    matched_queries = set(item.get("matched_queries") or [])
+
+    score = 0
+    for term in normalized_terms:
+        tokens = [token for token in re.split(r"\W+", term) if token]
+        title_has_all_tokens = bool(tokens) and all(token in title for token in tokens)
+        attachment_has_all_tokens = bool(tokens) and all(token in attachment_text for token in tokens)
+
+        if title == term:
+            score += 400
+        elif title.startswith(term):
+            score += 250
+        elif term in title:
+            score += 180
+        elif title_has_all_tokens:
+            score += 120
+
+        if term in attachment_text:
+            score += 90
+        elif attachment_has_all_tokens:
+            score += 60
+
+        if term in description:
+            score += 30
+        if term in raw_payload:
+            score += 15
+        if term in matched_queries:
+            score += 25
+
+    if item.get("resource_type") == "document":
+        score += 20
+    if title.endswith("study guide"):
+        score += 30
+    return score
+
+
+def _decode_resource_row(row: dict[str, Any]) -> dict[str, Any]:
+    decoded = dict(row)
+    raw_json = decoded.get("raw_json")
+    decoded["raw_payload"] = json.loads(raw_json) if isinstance(raw_json, str) and raw_json else None
+    return decoded
+
+
+def _decode_attachment_row(row: dict[str, Any]) -> dict[str, Any]:
+    decoded = dict(row)
+    metadata_json = decoded.get("metadata_json")
+    decoded["metadata_payload"] = (
+        json.loads(metadata_json) if isinstance(metadata_json, str) and metadata_json else None
+    )
+    return decoded

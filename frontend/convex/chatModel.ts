@@ -25,8 +25,7 @@ export function isTerminalStatus(status: ChatStatus) {
 }
 
 export function buildUntitledThreadTitle(_now: number) {
-  const seconds = Math.floor(_now / 1000);
-  return `Chat ${seconds}`;
+  return 'New chat';
 }
 
 export async function getUserRecordByUserId(db: DatabaseReader, userId: string) {
@@ -53,6 +52,14 @@ export async function requireChatEntitledUser(ctx: ChatAccessCtx) {
   }
 
   return { identity, userRecord };
+}
+
+export async function getChatEntitledUser(ctx: ChatAccessCtx) {
+  try {
+    return await requireChatEntitledUser(ctx);
+  } catch {
+    return null;
+  }
 }
 
 export async function getThreadById(db: DatabaseReader, threadId: ChatThreadId) {

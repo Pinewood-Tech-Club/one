@@ -89,6 +89,15 @@ export const markGenerationCompleted = action({
     completedAt: v.number(),
     providerMessageId: v.optional(v.string()),
     usage: v.optional(v.any()),
+    toolTraceSummary: v.optional(v.string()),
+    toolTraceStats: v.optional(
+      v.object({
+        toolCallsCount: v.number(),
+        coursesTouched: v.number(),
+        assignmentsTouched: v.number(),
+        documentsTouched: v.number(),
+      }),
+    ),
   },
   handler: async (ctx, args): Promise<any> => {
     assertSecret(args.secret);
@@ -98,6 +107,8 @@ export const markGenerationCompleted = action({
       completedAt: args.completedAt,
       providerMessageId: args.providerMessageId,
       usage: args.usage,
+      toolTraceSummary: args.toolTraceSummary,
+      toolTraceStats: args.toolTraceStats,
     });
   },
 });
@@ -110,6 +121,15 @@ export const markGenerationFailed = action({
     errorMessage: v.string(),
     completedAt: v.number(),
     content: v.optional(v.string()),
+    toolTraceSummary: v.optional(v.string()),
+    toolTraceStats: v.optional(
+      v.object({
+        toolCallsCount: v.number(),
+        coursesTouched: v.number(),
+        assignmentsTouched: v.number(),
+        documentsTouched: v.number(),
+      }),
+    ),
   },
   handler: async (ctx, args): Promise<any> => {
     assertSecret(args.secret);
@@ -119,6 +139,8 @@ export const markGenerationFailed = action({
       errorMessage: args.errorMessage,
       completedAt: args.completedAt,
       content: args.content,
+      toolTraceSummary: args.toolTraceSummary,
+      toolTraceStats: args.toolTraceStats,
     });
   },
 });
@@ -129,6 +151,15 @@ export const markGenerationCancelled = action({
     generationId: v.id("chatGenerations"),
     completedAt: v.number(),
     content: v.optional(v.string()),
+    toolTraceSummary: v.optional(v.string()),
+    toolTraceStats: v.optional(
+      v.object({
+        toolCallsCount: v.number(),
+        coursesTouched: v.number(),
+        assignmentsTouched: v.number(),
+        documentsTouched: v.number(),
+      }),
+    ),
   },
   handler: async (ctx, args): Promise<any> => {
     assertSecret(args.secret);
@@ -136,6 +167,83 @@ export const markGenerationCancelled = action({
       generationId: args.generationId,
       completedAt: args.completedAt,
       content: args.content,
+      toolTraceSummary: args.toolTraceSummary,
+      toolTraceStats: args.toolTraceStats,
+    });
+  },
+});
+
+export const upsertToolCall = action({
+  args: {
+    secret: v.string(),
+    generationId: v.id("chatGenerations"),
+    sequence: v.number(),
+    callId: v.string(),
+    toolName: v.string(),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("running"),
+      v.literal("completed"),
+      v.literal("failed"),
+    ),
+    argumentsText: v.optional(v.string()),
+    outputText: v.optional(v.string()),
+    summaryText: v.optional(v.string()),
+    errorText: v.optional(v.string()),
+    startedAt: v.optional(v.number()),
+    completedAt: v.optional(v.number()),
+  },
+  handler: async (ctx, args): Promise<any> => {
+    assertSecret(args.secret);
+    return await ctx.runMutation(internal.chatInternal.upsertToolCall, {
+      generationId: args.generationId,
+      sequence: args.sequence,
+      callId: args.callId,
+      toolName: args.toolName,
+      status: args.status,
+      argumentsText: args.argumentsText,
+      outputText: args.outputText,
+      summaryText: args.summaryText,
+      errorText: args.errorText,
+      startedAt: args.startedAt,
+      completedAt: args.completedAt,
+    });
+  },
+});
+
+export const updateGenerationToolTraceSummary = action({
+  args: {
+    secret: v.string(),
+    generationId: v.id("chatGenerations"),
+    toolTraceSummary: v.string(),
+    toolTraceStats: v.object({
+      toolCallsCount: v.number(),
+      coursesTouched: v.number(),
+      assignmentsTouched: v.number(),
+      documentsTouched: v.number(),
+    }),
+  },
+  handler: async (ctx, args): Promise<any> => {
+    assertSecret(args.secret);
+    return await ctx.runMutation(internal.chatInternal.updateGenerationToolTraceSummary, {
+      generationId: args.generationId,
+      toolTraceSummary: args.toolTraceSummary,
+      toolTraceStats: args.toolTraceStats,
+    });
+  },
+});
+
+export const updateThreadTitle = action({
+  args: {
+    secret: v.string(),
+    threadId: v.id("chatThreads"),
+    title: v.string(),
+  },
+  handler: async (ctx, args): Promise<any> => {
+    assertSecret(args.secret);
+    return await ctx.runMutation(internal.chatInternal.updateThreadTitle, {
+      threadId: args.threadId,
+      title: args.title,
     });
   },
 });

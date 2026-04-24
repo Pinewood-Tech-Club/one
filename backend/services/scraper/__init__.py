@@ -11,4 +11,10 @@ def run_scheduler_once() -> dict[str, Any]:
     return _run_scheduler_once()
 
 
-__all__ = ["run_scheduler_once"]
+def run_scheduler_loop() -> None:
+    from .scheduler import run_scheduler_loop as _run_scheduler_loop
+
+    return _run_scheduler_loop()
+
+
+__all__ = ["run_scheduler_once", "run_scheduler_loop"]

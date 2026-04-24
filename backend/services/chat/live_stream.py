@@ -60,17 +60,38 @@ def append_delta(
     status: str,
     updated_at: int,
 ) -> str:
-    # Single xadd — no content field, clients accumulate delta locally.
-    # State snapshot is updated by the heartbeat thread, not per-token.
-    return _get_client().xadd(
-        _events_key(generation_id),
-        {
-            "type": "delta",
-            "delta": delta,
-            "status": status,
-            "updatedAt": str(updated_at),
-        },
+    return append_event(
+        generation_id,
+        event_type="delta",
+        status=status,
+        updated_at=updated_at,
+        delta=delta,
     )
+
+
+def append_event(
+    generation_id: str,
+    *,
+    event_type: str,
+    status: str | None,
+    updated_at: int,
+    **fields: Any,
+) -> str:
+    payload: dict[str, str] = {
+        "type": event_type,
+        "updatedAt": str(updated_at),
+    }
+    if status is not None:
+        payload["status"] = status
+    for key, value in fields.items():
+        if value is None:
+            continue
+        if isinstance(value, (dict, list)):
+            payload[key] = json.dumps(value)
+        else:
+            payload[key] = str(value)
+
+    return _get_client().xadd(_events_key(generation_id), payload)
 
 
 def publish_terminal(
@@ -202,6 +223,18 @@ def _decode_stream_entry(event_id: str, payload: dict[str, Any]) -> dict[str, An
         decoded["errorMessage"] = payload["errorMessage"]
     if "usage" in payload and payload["usage"]:
         decoded["usage"] = json.loads(payload["usage"])
+    for key, value in payload.items():
+        if key in decoded or key in {"type", "status", "updatedAt", "delta", "content", "providerMessageId", "errorCode", "errorMessage", "usage"}:
+            continue
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped.startswith("{") or stripped.startswith("["):
+                try:
+                    decoded[key] = json.loads(stripped)
+                    continue
+                except ValueError:
+                    pass
+        decoded[key] = value
     return decoded
 
 

@@ -71,4 +71,11 @@ PIDS+=($!)
 ) &
 PIDS+=($!)
 
+(
+  cd "$ROOT_DIR/backend"
+  echo "Starting scraper scheduler..."
+  ./env/bin/python -m services.scraper.scheduler --loop
+) &
+PIDS+=($!)
+
 wait

@@ -2,6 +2,11 @@
 @import 'fumadocs-ui/css/catppuccin.css';
 @import 'fumadocs-ui/css/preset.css';
 
+html {
+  scrollbar-gutter: stable;
+  overflow-y: scroll;
+}
+
 @theme {
   /* --color-fd-foreground: #ff0000; */
   /* --color-fd-background: hsl(0, 0%, 96%);

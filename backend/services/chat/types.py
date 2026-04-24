@@ -1,20 +1,52 @@
 """
 Typed chat service models.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 MessageRole = Literal["system", "user", "assistant"]
 MessageStatus = Literal["queued", "streaming", "completed", "failed", "cancelled"]
 TerminalStatus = Literal["completed", "failed", "cancelled"]
+ToolCallStatus = Literal["pending", "running", "completed", "failed"]
 
 
 @dataclass(frozen=True)
 class ChatTranscriptMessage:
+    message_id: str | None
     role: MessageRole
     content: str
     status: MessageStatus
     created_at: int
+
+
+@dataclass(frozen=True)
+class GenerationUserRecord:
+    user_id: str
+    onboarding_step: str
+    schoology_connected: bool
+
+
+@dataclass(frozen=True)
+class GenerationCourse:
+    course_id: str
+    course_title: str
+    section_title: str | None
+
+
+@dataclass(frozen=True)
+class GenerationToolCall:
+    sequence: int
+    call_id: str
+    tool_name: str
+    status: ToolCallStatus
+    arguments_text: str | None
+    output_text: str | None
+    summary_text: str | None
+    error_text: str | None
+    created_at: int
+    updated_at: int
+    started_at: int | None
+    completed_at: int | None
 
 
 @dataclass(frozen=True)
@@ -31,6 +63,9 @@ class GenerationContext:
     updated_at: int
     started_at: int | None
     assistant_message_content: str
+    user_record: GenerationUserRecord | None
+    courses: list[GenerationCourse]
+    tool_calls: list[GenerationToolCall]
     transcript: list[ChatTranscriptMessage]
 
     @classmethod
@@ -41,6 +76,15 @@ class GenerationContext:
         transcript_raw = payload.get("transcript")
         if not isinstance(transcript_raw, list):
             raise ValueError("transcript must be a list")
+        courses_raw = payload.get("courses") or []
+        if not isinstance(courses_raw, list):
+            raise ValueError("courses must be a list")
+        tool_calls_raw = payload.get("toolCalls") or []
+        if not isinstance(tool_calls_raw, list):
+            raise ValueError("toolCalls must be a list")
+        user_record_raw = payload.get("userRecord")
+        if user_record_raw is not None and not isinstance(user_record_raw, dict):
+            raise ValueError("userRecord must be an object when provided")
 
         thread_id = _require_string(
             thread,
@@ -73,6 +117,12 @@ class GenerationContext:
             updated_at=_require_int(generation, "updatedAt"),
             started_at=_optional_int(generation, "startedAt"),
             assistant_message_content=_optional_string(assistant_message, "content") or "",
+            user_record=_parse_user_record(user_record_raw),
+            courses=[_parse_course(item) for item in courses_raw],
+            tool_calls=sorted(
+                [_parse_tool_call(item) for item in tool_calls_raw],
+                key=lambda item: (item.created_at, item.sequence),
+            ),
             transcript=sorted(transcript, key=lambda item: item.created_at),
         )
 
@@ -87,6 +137,39 @@ class ProviderCompletion:
     provider_message_id: str | None
     finish_reason: str | None
     usage: dict[str, Any] | None
+
+
+@dataclass(frozen=True)
+class ProviderToolCall:
+    item_id: str
+    call_id: str
+    name: str
+    arguments: str
+
+
+@dataclass(frozen=True)
+class ProviderRoundResult:
+    response_id: str | None
+    output: list[dict[str, Any]]
+    output_text: str
+    function_calls: list[ProviderToolCall]
+    usage: dict[str, Any] | None
+    status: str | None = None
+
+
+@dataclass(frozen=True)
+class ToolExecutionStats:
+    course_ids: set[str] = field(default_factory=set)
+    assignment_handles: set[str] = field(default_factory=set)
+    document_handles: set[str] = field(default_factory=set)
+
+    def to_trace_stats(self) -> dict[str, int]:
+        return {
+            "toolCallsCount": 0,
+            "coursesTouched": len(self.course_ids),
+            "assignmentsTouched": len(self.assignment_handles),
+            "documentsTouched": len(self.document_handles),
+        }
 
 
 def _require_dict(payload: dict[str, Any], key: str) -> dict[str, Any]:
@@ -168,8 +251,53 @@ def _parse_transcript_message(value: Any) -> ChatTranscriptMessage:
         raise ValueError("transcript createdAt must be an integer")
 
     return ChatTranscriptMessage(
+        message_id=_optional_string(value, "_id"),
         role=role,
         content=content,
         status=status,
         created_at=int(created_at),
+    )
+
+
+def _parse_user_record(value: dict[str, Any] | None) -> GenerationUserRecord | None:
+    if value is None:
+        return None
+    return GenerationUserRecord(
+        user_id=_require_string(value, "userId"),
+        onboarding_step=_require_string(value, "onboardingStep"),
+        schoology_connected=bool(value.get("schoologyConnected", False)),
+    )
+
+
+def _parse_course(value: Any) -> GenerationCourse:
+    if not isinstance(value, dict):
+        raise ValueError("course entry must be an object")
+    return GenerationCourse(
+        course_id=_require_string(value, "courseId"),
+        course_title=_require_string(value, "courseTitle"),
+        section_title=_optional_string(value, "sectionTitle"),
+    )
+
+
+def _parse_tool_call(value: Any) -> GenerationToolCall:
+    if not isinstance(value, dict):
+        raise ValueError("toolCall entry must be an object")
+
+    status = value.get("status")
+    if status not in {"pending", "running", "completed", "failed"}:
+        raise ValueError("toolCall status is invalid")
+
+    return GenerationToolCall(
+        sequence=_require_int(value, "sequence"),
+        call_id=_require_string(value, "callId"),
+        tool_name=_require_string(value, "toolName"),
+        status=status,
+        arguments_text=_optional_string(value, "argumentsText"),
+        output_text=_optional_string(value, "outputText"),
+        summary_text=_optional_string(value, "summaryText"),
+        error_text=_optional_string(value, "errorText"),
+        created_at=_require_int(value, "createdAt"),
+        updated_at=_require_int(value, "updatedAt"),
+        started_at=_optional_int(value, "startedAt"),
+        completed_at=_optional_int(value, "completedAt"),
     )

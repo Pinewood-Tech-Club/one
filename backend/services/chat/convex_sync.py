@@ -48,6 +48,10 @@ def is_generation_cancel_requested(generation_id: str) -> bool:
     return bool(result)
 
 
+def update_thread_title(thread_id: str, title: str) -> None:
+    _call_action("updateThreadTitle", {"threadId": thread_id, "title": title})
+
+
 def mark_generation_streaming(
     generation_id: str,
     started_at: int,
@@ -90,6 +94,8 @@ def mark_generation_completed(
     completed_at: int,
     provider_message_id: str | None = None,
     usage: dict[str, Any] | None = None,
+    tool_trace_summary: str | None = None,
+    tool_trace_stats: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "generationId": generation_id,
@@ -100,6 +106,10 @@ def mark_generation_completed(
         payload["providerMessageId"] = provider_message_id
     if usage is not None:
         payload["usage"] = usage
+    if tool_trace_summary is not None:
+        payload["toolTraceSummary"] = tool_trace_summary
+    if tool_trace_stats is not None:
+        payload["toolTraceStats"] = tool_trace_stats
     return _call_action("markGenerationCompleted", payload)
 
 
@@ -110,6 +120,8 @@ def mark_generation_failed(
     completed_at: int,
     *,
     content: str | None = None,
+    tool_trace_summary: str | None = None,
+    tool_trace_stats: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "generationId": generation_id,
@@ -119,6 +131,10 @@ def mark_generation_failed(
     }
     if content is not None:
         payload["content"] = content
+    if tool_trace_summary is not None:
+        payload["toolTraceSummary"] = tool_trace_summary
+    if tool_trace_stats is not None:
+        payload["toolTraceStats"] = tool_trace_stats
     return _call_action("markGenerationFailed", payload)
 
 
@@ -127,6 +143,8 @@ def mark_generation_cancelled(
     completed_at: int,
     *,
     content: str | None = None,
+    tool_trace_summary: str | None = None,
+    tool_trace_stats: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "generationId": generation_id,
@@ -134,4 +152,60 @@ def mark_generation_cancelled(
     }
     if content is not None:
         payload["content"] = content
+    if tool_trace_summary is not None:
+        payload["toolTraceSummary"] = tool_trace_summary
+    if tool_trace_stats is not None:
+        payload["toolTraceStats"] = tool_trace_stats
     return _call_action("markGenerationCancelled", payload)
+
+
+def upsert_tool_call(
+    generation_id: str,
+    *,
+    sequence: int,
+    call_id: str,
+    tool_name: str,
+    status: str,
+    arguments_text: str | None = None,
+    output_text: str | None = None,
+    summary_text: str | None = None,
+    error_text: str | None = None,
+    started_at: int | None = None,
+    completed_at: int | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "generationId": generation_id,
+        "sequence": sequence,
+        "callId": call_id,
+        "toolName": tool_name,
+        "status": status,
+    }
+    if arguments_text is not None:
+        payload["argumentsText"] = arguments_text
+    if output_text is not None:
+        payload["outputText"] = output_text
+    if summary_text is not None:
+        payload["summaryText"] = summary_text
+    if error_text is not None:
+        payload["errorText"] = error_text
+    if started_at is not None:
+        payload["startedAt"] = started_at
+    if completed_at is not None:
+        payload["completedAt"] = completed_at
+    return _call_action("upsertToolCall", payload)
+
+
+def update_generation_tool_trace_summary(
+    generation_id: str,
+    *,
+    tool_trace_summary: str,
+    tool_trace_stats: dict[str, Any],
+) -> dict[str, Any]:
+    return _call_action(
+        "updateGenerationToolTraceSummary",
+        {
+            "generationId": generation_id,
+            "toolTraceSummary": tool_trace_summary,
+            "toolTraceStats": tool_trace_stats,
+        },
+    )

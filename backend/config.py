@@ -128,6 +128,8 @@ class Config:
     CHAT_REDIS_ACTIVE_TTL_SECONDS = int(os.environ.get("CHAT_REDIS_ACTIVE_TTL_SECONDS", "3600"))
     CHAT_REDIS_FINAL_TTL_SECONDS = int(os.environ.get("CHAT_REDIS_FINAL_TTL_SECONDS", "600"))
     UPSTASH_REDIS_URL = os.environ.get("UPSTASH_REDIS_URL")
+    DOCUMENT_SUMMARY_MODEL = os.environ.get("DOCUMENT_SUMMARY_MODEL", "gpt-5-mini")
+    DOC_DETAIL_MAX_CHARS = int(os.environ.get("DOC_DETAIL_MAX_CHARS", "65536"))
 
     # Mobile auth/token configuration
     MOBILE_ACCESS_TOKEN_TTL_SECONDS = int(os.environ.get("MOBILE_ACCESS_TOKEN_TTL_SECONDS", "900"))
@@ -164,9 +166,12 @@ class Config:
 
     # Scraper configuration
     SCRAPER_SYNC_INTERVAL_MINUTES = int(os.environ.get("SCRAPER_SYNC_INTERVAL_MINUTES", "10"))
+    SCRAPER_SCHEDULER_POLL_SECONDS = int(
+        os.environ.get("SCRAPER_SCHEDULER_POLL_SECONDS", "60")
+    )
     SCRAPER_MAX_SECTION_CONCURRENCY = int(os.environ.get("SCRAPER_MAX_SECTION_CONCURRENCY", "2"))
     SCRAPER_MULTIGET_BATCH_SIZE = int(os.environ.get("SCRAPER_MULTIGET_BATCH_SIZE", "50"))
-    SCRAPER_LEASE_STALE_SECONDS = int(os.environ.get("SCRAPER_LEASE_STALE_SECONDS", "1800"))
+    SCRAPER_LEASE_STALE_SECONDS = int(os.environ.get("SCRAPER_LEASE_STALE_SECONDS", "300"))
     SCRAPER_HEARTBEAT_SECONDS = int(os.environ.get("SCRAPER_HEARTBEAT_SECONDS", "30"))
     SCRAPER_SECTION_MAX_RETRIES = int(os.environ.get("SCRAPER_SECTION_MAX_RETRIES", "3"))
     SCRAPER_STORAGE_ROOT = os.environ.get(

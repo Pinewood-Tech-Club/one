@@ -12,6 +12,7 @@ import {
   getGenerationById,
   getMessageById,
   getThreadById,
+  getUserRecordByUserId,
   isTerminalStatus,
 } from "./chatModel";
 
@@ -74,12 +75,21 @@ export const getGenerationContext = internalQuery({
       return null;
     }
 
-    const [thread, userMessage, assistantMessage, transcript] = await Promise.all([
+    const [thread, userMessage, assistantMessage, transcript, userRecord, memberships, toolCalls] = await Promise.all([
       getThreadById(ctx.db, generation.threadId),
       getMessageById(ctx.db, generation.userMessageId),
       getMessageById(ctx.db, generation.assistantMessageId),
       ctx.db
         .query("chatMessages")
+        .withIndex("by_thread_created", (q) => q.eq("threadId", generation.threadId))
+        .collect(),
+      getUserRecordByUserId(ctx.db, generation.userId),
+      ctx.db
+        .query("schoologyCourseMemberships")
+        .withIndex("by_user", (q) => q.eq("userId", generation.userId))
+        .collect(),
+      ctx.db
+        .query("chatToolCalls")
         .withIndex("by_thread_created", (q) => q.eq("threadId", generation.threadId))
         .collect(),
     ]);
@@ -89,6 +99,45 @@ export const getGenerationContext = internalQuery({
     }
 
     transcript.sort((a, b) => a.createdAt - b.createdAt);
+    toolCalls.sort((a, b) => {
+      if (a.createdAt !== b.createdAt) {
+        return a.createdAt - b.createdAt;
+      }
+      return a.sequence - b.sequence;
+    });
+
+    const courseIds = Array.from(
+      new Set(
+        memberships
+          .filter((membership) => membership.isActive)
+          .map((membership) => membership.courseId),
+      ),
+    );
+    const courseRows = await Promise.all(
+      courseIds.map((courseId) =>
+        ctx.db
+          .query("schoologyCourses")
+          .withIndex("by_course", (q) => q.eq("courseId", courseId))
+          .first(),
+      ),
+    );
+    const courses = courseRows
+      .filter((course): course is NonNullable<typeof course> => course !== null)
+      .map((course) => ({
+        courseId: course.courseId,
+        courseTitle:
+          typeof course.data?.course_title === "string" && course.data.course_title.trim()
+            ? course.data.course_title.trim()
+            : typeof course.data?.title === "string" && course.data.title.trim()
+              ? course.data.title.trim()
+              : course.courseId,
+        sectionTitle:
+          typeof course.data?.section_title === "string" && course.data.section_title.trim()
+            ? course.data.section_title.trim()
+            : typeof course.data?.title === "string" && course.data.title.trim()
+              ? course.data.title.trim()
+              : undefined,
+      }));
 
     return {
       generation,
@@ -97,6 +146,15 @@ export const getGenerationContext = internalQuery({
       userMessage,
       assistantMessage,
       transcript,
+      userRecord: userRecord
+        ? {
+            userId: userRecord.userId,
+            onboardingStep: userRecord.onboardingStep,
+            schoologyConnected: userRecord.schoologyConnected,
+          }
+        : null,
+      courses,
+      toolCalls,
     };
   },
 });
@@ -201,6 +259,15 @@ export const markGenerationCompleted = internalMutation({
     completedAt: v.number(),
     providerMessageId: v.optional(v.string()),
     usage: v.optional(v.any()),
+    toolTraceSummary: v.optional(v.string()),
+    toolTraceStats: v.optional(
+      v.object({
+        toolCallsCount: v.number(),
+        coursesTouched: v.number(),
+        assignmentsTouched: v.number(),
+        documentsTouched: v.number(),
+      }),
+    ),
   },
   handler: async (ctx, args) => {
     const generation = await getGenerationById(ctx.db, args.generationId);
@@ -235,6 +302,8 @@ export const markGenerationCompleted = internalMutation({
       activity: undefined,
       providerMessageId: args.providerMessageId ?? generation.providerMessageId,
       usage: args.usage ?? generation.usage,
+      toolTraceSummary: args.toolTraceSummary ?? generation.toolTraceSummary,
+      toolTraceStats: args.toolTraceStats ?? generation.toolTraceStats,
       errorCode: undefined,
       errorMessage: undefined,
       updatedAt: args.completedAt,
@@ -261,6 +330,15 @@ export const markGenerationFailed = internalMutation({
     errorCode: v.string(),
     errorMessage: v.string(),
     completedAt: v.number(),
+    toolTraceSummary: v.optional(v.string()),
+    toolTraceStats: v.optional(
+      v.object({
+        toolCallsCount: v.number(),
+        coursesTouched: v.number(),
+        assignmentsTouched: v.number(),
+        documentsTouched: v.number(),
+      }),
+    ),
   },
   handler: async (ctx, args) => {
     const generation = await getGenerationById(ctx.db, args.generationId);
@@ -292,6 +370,8 @@ export const markGenerationFailed = internalMutation({
     await ctx.db.patch(generation._id, {
       status: "failed",
       activity: undefined,
+      toolTraceSummary: args.toolTraceSummary ?? generation.toolTraceSummary,
+      toolTraceStats: args.toolTraceStats ?? generation.toolTraceStats,
       errorCode: args.errorCode,
       errorMessage: args.errorMessage,
       updatedAt: args.completedAt,
@@ -308,6 +388,15 @@ export const markGenerationCancelled = internalMutation({
     generationId: v.id("chatGenerations"),
     content: v.optional(v.string()),
     completedAt: v.number(),
+    toolTraceSummary: v.optional(v.string()),
+    toolTraceStats: v.optional(
+      v.object({
+        toolCallsCount: v.number(),
+        coursesTouched: v.number(),
+        assignmentsTouched: v.number(),
+        documentsTouched: v.number(),
+      }),
+    ),
   },
   handler: async (ctx, args) => {
     const generation = await getGenerationById(ctx.db, args.generationId);
@@ -339,11 +428,111 @@ export const markGenerationCancelled = internalMutation({
     await ctx.db.patch(generation._id, {
       status: "cancelled",
       activity: undefined,
+      toolTraceSummary: args.toolTraceSummary ?? generation.toolTraceSummary,
+      toolTraceStats: args.toolTraceStats ?? generation.toolTraceStats,
       errorCode: undefined,
       errorMessage: undefined,
       updatedAt: args.completedAt,
       completedAt: args.completedAt,
       lastTextAt: args.content ? args.completedAt : generation.lastTextAt,
+    });
+
+    return ctx.db.get(generation._id);
+  },
+});
+
+export const upsertToolCall = internalMutation({
+  args: {
+    generationId: v.id("chatGenerations"),
+    sequence: v.number(),
+    callId: v.string(),
+    toolName: v.string(),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("running"),
+      v.literal("completed"),
+      v.literal("failed"),
+    ),
+    argumentsText: v.optional(v.string()),
+    outputText: v.optional(v.string()),
+    summaryText: v.optional(v.string()),
+    errorText: v.optional(v.string()),
+    startedAt: v.optional(v.number()),
+    completedAt: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const generation = await getGenerationById(ctx.db, args.generationId);
+    if (!generation) {
+      throw new Error("Generation not found");
+    }
+
+    const now = Date.now();
+    const existing = await ctx.db
+      .query("chatToolCalls")
+      .withIndex("by_generation_call", (q) =>
+        q.eq("generationId", args.generationId).eq("callId", args.callId),
+      )
+      .first();
+
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        sequence: args.sequence,
+        toolName: args.toolName,
+        status: args.status,
+        argumentsText: args.argumentsText ?? existing.argumentsText,
+        outputText: args.outputText ?? existing.outputText,
+        summaryText: args.summaryText ?? existing.summaryText,
+        errorText: args.errorText ?? existing.errorText,
+        startedAt: args.startedAt ?? existing.startedAt,
+        completedAt: args.completedAt ?? existing.completedAt,
+        updatedAt: now,
+      });
+      return ctx.db.get(existing._id);
+    }
+
+    const toolCallId = await ctx.db.insert("chatToolCalls", {
+      generationId: args.generationId,
+      threadId: generation.threadId,
+      userId: generation.userId,
+      sequence: args.sequence,
+      callId: args.callId,
+      toolName: args.toolName,
+      status: args.status,
+      argumentsText: args.argumentsText,
+      outputText: args.outputText,
+      summaryText: args.summaryText,
+      errorText: args.errorText,
+      startedAt: args.startedAt,
+      completedAt: args.completedAt,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    return ctx.db.get(toolCallId);
+  },
+});
+
+export const updateGenerationToolTraceSummary = internalMutation({
+  args: {
+    generationId: v.id("chatGenerations"),
+    toolTraceSummary: v.string(),
+    toolTraceStats: v.object({
+      toolCallsCount: v.number(),
+      coursesTouched: v.number(),
+      assignmentsTouched: v.number(),
+      documentsTouched: v.number(),
+    }),
+  },
+  handler: async (ctx, args) => {
+    const generation = await getGenerationById(ctx.db, args.generationId);
+    if (!generation) {
+      throw new Error("Generation not found");
+    }
+
+    await ctx.db.patch(generation._id, {
+      toolTraceSummary: args.toolTraceSummary,
+      toolTraceStats: args.toolTraceStats,
+      updatedAt: Date.now(),
     });
 
     return ctx.db.get(generation._id);
@@ -394,6 +583,20 @@ export const failStaleGenerations = internalMutation({
     }
 
     return { failed };
+  },
+});
+
+export const updateThreadTitle = internalMutation({
+  args: {
+    threadId: v.id("chatThreads"),
+    title: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const thread = await ctx.db.get(args.threadId);
+    if (!thread) return;
+    const title = args.title.trim().slice(0, 32);
+    if (!title) return;
+    await ctx.db.patch(args.threadId, { title });
   },
 });
 

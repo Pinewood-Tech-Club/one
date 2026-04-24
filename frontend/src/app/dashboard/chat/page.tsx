@@ -20,9 +20,20 @@ type StreamingState = {
   status: string;
   activity: string | null;
   generationId: Id<'chatGenerations'>;
+  toolCalls: StreamingToolCall[];
 } | null;
 
 type Thread = { _id: Id<'chatThreads'>; title: string; lastMessageAt: number };
+
+type StreamingToolCall = {
+  sequence: number;
+  callId: string;
+  toolName: string;
+  status: string;
+  argumentsText?: string;
+  summaryText?: string;
+  errorText?: string;
+};
 
 function normalizePathname(pathname: string): string {
   if (pathname.length > 1 && pathname.endsWith('/')) {
@@ -41,12 +52,61 @@ function truncateThreadName(name: string): string {
   return `${name.slice(0, 16)}…${name.slice(-16)}`;
 }
 
+function useTypewriter(target: string, threadId: string | null, charMs = 50): string {
+  const [displayed, setDisplayed] = useState(target);
+  const prevRef = useRef(target);
+  const prevThreadRef = useRef(threadId);
+
+  useEffect(() => {
+    const prev = prevRef.current;
+    const prevThread = prevThreadRef.current;
+    prevRef.current = target;
+    prevThreadRef.current = threadId;
+
+    if (prev === target) return;
+
+    // Thread switched — snap immediately, no animation
+    if (prevThread !== threadId) {
+      setDisplayed(target);
+      return;
+    }
+
+    let current = prev;
+    let cancelled = false;
+
+    const tick = () => {
+      if (cancelled) return;
+      if (current.length > 0) {
+        current = current.slice(0, -1);
+        setDisplayed(current);
+        setTimeout(tick, charMs);
+      } else {
+        const typeIn = () => {
+          if (cancelled) return;
+          if (current.length < target.length) {
+            current = target.slice(0, current.length + 1);
+            setDisplayed(current);
+            setTimeout(typeIn, charMs);
+          }
+        };
+        typeIn();
+      }
+    };
+
+    setTimeout(tick, charMs);
+    return () => { cancelled = true; };
+  }, [target, threadId, charMs]);
+
+  return displayed;
+}
+
 // ── SSE parsing hook ──────────────────────────────────────────────────────────
 
 function useSSEStream(
   generationId: Id<'chatGenerations'> | null,
   onSnapshot: (data: Record<string, unknown>) => void,
   onDelta: (data: Record<string, unknown>) => void,
+  onToolCall: (data: Record<string, unknown>) => void,
   onTerminal: (data: Record<string, unknown>) => void,
 ) {
   useEffect(() => {
@@ -87,6 +147,7 @@ function useSSEStream(
                 const payload = JSON.parse(line.slice(5).trim());
                 if (currentEvent === 'snapshot') onSnapshot(payload);
                 else if (currentEvent === 'delta') onDelta(payload);
+                else if (currentEvent === 'tool_call') onToolCall(payload);
                 else if (currentEvent === 'terminal') {
                   onTerminal(payload);
                   return;
@@ -261,6 +322,43 @@ function AssistantMessage({
   );
 }
 
+function ToolActivityList({ toolCalls }: { toolCalls: StreamingToolCall[] }) {
+  if (!toolCalls.length) return null;
+
+  return (
+    <div className="w-full rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-left">
+      <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-zinc-500">
+        Tool activity
+      </div>
+      <div className="mt-2 space-y-2">
+        {toolCalls.map((toolCall) => {
+          const detail =
+            toolCall.status === 'completed'
+              ? toolCall.summaryText
+              : toolCall.status === 'failed'
+                ? toolCall.errorText
+                : toolCall.argumentsText;
+          return (
+            <div key={toolCall.callId} className="rounded-xl bg-white px-3 py-2 border border-zinc-200">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-sm font-medium text-zinc-900">{toolCall.toolName}</div>
+                <div className="text-[11px] uppercase tracking-[0.1em] text-zinc-500">
+                  {toolCall.status}
+                </div>
+              </div>
+              {detail && (
+                <div className="mt-1 text-xs leading-relaxed text-zinc-600 break-words">
+                  {detail}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ── Composer ──────────────────────────────────────────────────────────────────
 
 function Composer({
@@ -311,6 +409,7 @@ function Composer({
   const currentLabel = selectedThread
     ? truncateThreadName(selectedThread.title)
     : 'New chat';
+  const animatedLabel = useTypewriter(currentLabel, selectedThreadId ?? null);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -324,7 +423,7 @@ function Composer({
   return (
     <div
       ref={dropdownRef}
-      className="fixed bottom-4 left-1/2 -translate-x-1/2 w-[840px] max-w-[calc(100vw-32px)] bg-[#166534] rounded-[24px] p-[4px] flex flex-col gap-[4px] shadow-lg z-20"
+      className="fixed bottom-4 left-1/2 -translate-x-1/2 w-[840px] max-w-[calc(100%-32px)] bg-[#166534] rounded-[24px] p-[4px] flex flex-col gap-[4px] shadow-lg z-20"
     >
       {/* Top row: thread pill (morphs hug↔fill) + new-chat button.
           flex-grow on the pill transitions 0 → 1; an invisible spacer
@@ -354,7 +453,7 @@ function Composer({
                 }`}
               >
                 <span className="flex-1 text-left min-w-0 truncate">
-                  {currentLabel}
+                  {animatedLabel}
                 </span>
                 <span className="relative w-4 h-4 shrink-0">
                   <ChevronUp
@@ -502,6 +601,61 @@ export default function ChatPage() {
     );
   }, []);
 
+  const onToolCall = useCallback((data: Record<string, unknown>) => {
+    setStreaming((prev) => {
+      if (!prev) return null;
+
+      const callId = typeof data.callId === 'string' ? data.callId : null;
+      const toolName = typeof data.toolName === 'string' ? data.toolName : null;
+      if (!callId || !toolName) return prev;
+
+      const nextToolCalls = [...prev.toolCalls];
+      const existingIndex = nextToolCalls.findIndex((toolCall) => toolCall.callId === callId);
+      const nextEntry: StreamingToolCall = {
+        sequence: typeof data.sequence === 'number' ? data.sequence : existingIndex >= 0 ? nextToolCalls[existingIndex].sequence : nextToolCalls.length + 1,
+        callId,
+        toolName,
+        status: typeof data.status === 'string' ? data.status : existingIndex >= 0 ? nextToolCalls[existingIndex].status : 'pending',
+        argumentsText:
+          typeof data.argumentsText === 'string'
+            ? data.argumentsText
+            : existingIndex >= 0
+              ? nextToolCalls[existingIndex].argumentsText
+              : undefined,
+        summaryText:
+          typeof data.summaryText === 'string'
+            ? data.summaryText
+            : existingIndex >= 0
+              ? nextToolCalls[existingIndex].summaryText
+              : undefined,
+        errorText:
+          typeof data.errorText === 'string'
+            ? data.errorText
+            : existingIndex >= 0
+              ? nextToolCalls[existingIndex].errorText
+              : undefined,
+      };
+
+      if (existingIndex >= 0) {
+        nextToolCalls[existingIndex] = nextEntry;
+      } else {
+        nextToolCalls.push(nextEntry);
+      }
+      nextToolCalls.sort((a, b) => a.sequence - b.sequence);
+
+      return {
+        ...prev,
+        activity:
+          nextEntry.status === 'running'
+            ? 'tool_running'
+            : nextEntry.status === 'completed'
+              ? 'post_tool_reasoning'
+              : prev.activity,
+        toolCalls: nextToolCalls,
+      };
+    });
+  }, []);
+
   const onTerminal = useCallback((data: Record<string, unknown>) => {
     setStreaming(null);
     if (data.status === 'failed') {
@@ -509,7 +663,7 @@ export default function ChatPage() {
     }
   }, []);
 
-  useSSEStream(streaming?.generationId ?? null, onSnapshot, onDelta, onTerminal);
+  useSSEStream(streaming?.generationId ?? null, onSnapshot, onDelta, onToolCall, onTerminal);
 
   useEffect(() => {
     if (!activeGeneration) return;
@@ -529,6 +683,7 @@ export default function ChatPage() {
         status: activeGeneration.status,
         activity: (activeGeneration.activity as string | null) ?? null,
         generationId: activeGeneration._id,
+        toolCalls: [],
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -581,6 +736,7 @@ export default function ChatPage() {
         status: 'queued',
         activity: null,
         generationId: result.generationId,
+        toolCalls: [],
       });
     } catch (err) {
       console.error('[Chat] sendMessage failed:', err);
@@ -622,7 +778,7 @@ export default function ChatPage() {
   }
 
   return (
-    <div className="min-h-screen pt-[72px] pb-[220px] bg-white text-black">
+    <div className="min-h-screen pt-[72px] pb-[220px] bg-white text-black overflow-x-hidden">
       <div className="mx-auto w-full max-w-[840px] px-4 flex flex-col gap-5">
         {!hasContent && (
           <div className="flex flex-col items-center justify-center gap-3 text-zinc-400 pt-32">
@@ -646,12 +802,15 @@ export default function ChatPage() {
         )}
 
         {streaming && (
-          <AssistantMessage
-            content={streaming.content}
-            streaming
-            activity={streaming.activity}
-            status={streaming.status}
-          />
+          <>
+            <ToolActivityList toolCalls={streaming.toolCalls} />
+            <AssistantMessage
+              content={streaming.content}
+              streaming
+              activity={streaming.activity}
+              status={streaming.status}
+            />
+          </>
         )}
 
         <div ref={messagesEndRef} />

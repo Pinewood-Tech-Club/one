@@ -72,6 +72,15 @@ export default defineSchema({
     errorMessage: v.optional(v.string()),
     providerMessageId: v.optional(v.string()),
     usage: v.optional(v.any()),
+    toolTraceSummary: v.optional(v.string()),
+    toolTraceStats: v.optional(
+      v.object({
+        toolCallsCount: v.number(),
+        coursesTouched: v.number(),
+        assignmentsTouched: v.number(),
+        documentsTouched: v.number(),
+      }),
+    ),
     createdAt: v.number(),
     startedAt: v.optional(v.number()),
     updatedAt: v.number(),
@@ -83,6 +92,32 @@ export default defineSchema({
     .index("by_status_updated", ["status", "updatedAt"])
     .index("by_assistant_message", ["assistantMessageId"])
     .index("by_user_request", ["userId", "clientRequestId"]),
+
+  chatToolCalls: defineTable({
+    generationId: v.id("chatGenerations"),
+    threadId: v.id("chatThreads"),
+    userId: v.string(),
+    sequence: v.number(),
+    callId: v.string(),
+    toolName: v.string(),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("running"),
+      v.literal("completed"),
+      v.literal("failed"),
+    ),
+    argumentsText: v.optional(v.string()),
+    outputText: v.optional(v.string()),
+    summaryText: v.optional(v.string()),
+    errorText: v.optional(v.string()),
+    startedAt: v.optional(v.number()),
+    completedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_generation_sequence", ["generationId", "sequence"])
+    .index("by_generation_call", ["generationId", "callId"])
+    .index("by_thread_created", ["threadId", "createdAt"]),
 
   // Schoology cache tables - normalized to avoid per-user duplication.
   schoologyCourses: defineTable({
