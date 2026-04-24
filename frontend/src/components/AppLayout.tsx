@@ -78,7 +78,10 @@ function AppLayoutInner() {
   // Update URL when page changes
   useEffect(() => {
     const targetPath = pageToPathname(currentPage);
-    if (pathname !== targetPath) {
+    const normalizedPathname = pathname.length > 1 && pathname.endsWith('/')
+      ? pathname.slice(0, -1)
+      : pathname;
+    if (normalizedPathname !== targetPath) {
       window.history.pushState(null, '', targetPath);
     }
   }, [currentPage, pathname]);
