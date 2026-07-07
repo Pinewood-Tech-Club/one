@@ -719,7 +719,15 @@ export default function ChatPage() {
       const byCallId = new Map(prev.toolCalls.map((toolCall) => [toolCall.callId, toolCall]));
       let changed = false;
       for (const persisted of persistedToolCalls) {
-        if (byCallId.has(persisted.callId)) continue;
+        const existing = byCallId.get(persisted.callId);
+        // A persisted row that reached a terminal status also wins over a
+        // non-terminal local entry: if the SSE stream died mid-generation the
+        // local status would otherwise freeze stale while Convex moves on.
+        const persistedIsTerminal =
+          persisted.status === 'completed' || persisted.status === 'failed';
+        const existingIsTerminal =
+          existing?.status === 'completed' || existing?.status === 'failed';
+        if (existing && (!persistedIsTerminal || existingIsTerminal)) continue;
         byCallId.set(persisted.callId, {
           sequence: persisted.sequence,
           callId: persisted.callId,
@@ -798,12 +806,14 @@ export default function ChatPage() {
   const handleSelectThread = (id: Id<'chatThreads'>) => {
     setSelectedThreadId(id);
     setStreaming(null);
+    setSendError(null);
   };
 
   const handleNewChat = () => {
     setSelectedThreadId(null);
     setStreaming(null);
     setInputValue('');
+    setSendError(null);
   };
 
   const visibleMessages = messages?.filter((msg) => {
@@ -880,24 +890,26 @@ export default function ChatPage() {
         <div ref={messagesEndRef} />
       </div>
 
-      {canCancel && (
-        <div className="fixed bottom-[200px] left-1/2 -translate-x-1/2 z-30">
-          <button
-            onClick={() =>
-              requestCancelMutation({ generationId: streaming.generationId })
-            }
-            className="px-3 py-1.5 rounded-full bg-white border border-zinc-300 text-xs text-zinc-600 hover:text-red-500 hover:border-red-300 shadow-sm transition-colors"
-          >
-            Stop generating
-          </button>
-        </div>
-      )}
-
-      {sendError && (
-        <div className="fixed bottom-[200px] left-1/2 -translate-x-1/2 z-30">
-          <div className="px-3 py-1.5 rounded-full bg-white border border-red-300 text-xs text-red-500 shadow-sm">
-            {sendError}
-          </div>
+      {/* Shared container so the cancel button and error pill stack instead
+          of overlapping when both are visible (e.g. a send rejected because
+          another session already started a generation on this thread). */}
+      {(canCancel || sendError) && (
+        <div className="fixed bottom-[200px] left-1/2 -translate-x-1/2 z-30 flex flex-col items-center gap-2">
+          {canCancel && (
+            <button
+              onClick={() =>
+                requestCancelMutation({ generationId: streaming.generationId })
+              }
+              className="px-3 py-1.5 rounded-full bg-white border border-zinc-300 text-xs text-zinc-600 hover:text-red-500 hover:border-red-300 shadow-sm transition-colors"
+            >
+              Stop generating
+            </button>
+          )}
+          {sendError && (
+            <div className="px-3 py-1.5 rounded-full bg-white border border-red-300 text-xs text-red-500 shadow-sm">
+              {sendError}
+            </div>
+          )}
         </div>
       )}
 
