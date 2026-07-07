@@ -66,6 +66,27 @@ export const getActiveGeneration = query({
   },
 });
 
+export const listToolCalls = query({
+  args: {
+    generationId: v.id("chatGenerations"),
+  },
+  handler: async (ctx, args) => {
+    const entitled = await getChatEntitledUser(ctx);
+    if (!entitled) return null;
+    const generation = await getOwnedGenerationOrThrow(
+      ctx.db,
+      args.generationId,
+      entitled.identity.userId,
+    );
+    return ctx.db
+      .query("chatToolCalls")
+      .withIndex("by_generation_sequence", (q) =>
+        q.eq("generationId", generation._id),
+      )
+      .collect();
+  },
+});
+
 export const sendMessage = mutation({
   args: {
     threadId: v.optional(v.id("chatThreads")),
