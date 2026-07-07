@@ -240,12 +240,12 @@ class SchoologyService:
 
         return payloads
 
-    def get_courses(self, sync_to_convex: bool = True) -> list[dict]:
+    def get_courses(self, sync_to_cache: bool = True) -> list[dict]:
         """
         Fetch user's courses from Schoology
 
         Args:
-            sync_to_convex: Whether to refresh the local cache (default: True).
+            sync_to_cache: Whether to refresh the local cache (default: True).
                 Name retained for cross-package call-site compatibility.
 
         Returns:
@@ -254,23 +254,23 @@ class SchoologyService:
         sections = self.sc.get_sections()
         courses = [section.__dict__ for section in sections]
 
-        if sync_to_convex:
+        if sync_to_cache:
             schoology_cache_store.update_courses(
                 int(self.user_id), courses, int(time.time() * 1000)
             )
 
         return courses
 
-    def get_sections(self, sync_to_convex: bool = False) -> list[dict]:
+    def get_sections(self, sync_to_cache: bool = False) -> list[dict]:
         """
         Fetch sections visible to the current credential owner.
         """
-        return self.get_courses(sync_to_convex=sync_to_convex)
+        return self.get_courses(sync_to_cache=sync_to_cache)
 
     def get_assignments(
         self,
         course_id: str,
-        sync_to_convex: bool = True,
+        sync_to_cache: bool = True,
         *,
         with_attachments: bool = False,
     ) -> list[dict]:
@@ -279,7 +279,7 @@ class SchoologyService:
 
         Args:
             course_id: Schoology section/course ID
-            sync_to_convex: Whether to refresh the local cache (default: True).
+            sync_to_cache: Whether to refresh the local cache (default: True).
                 Name retained for cross-package call-site compatibility.
 
         Returns:
@@ -290,7 +290,7 @@ class SchoologyService:
             with_attachments=with_attachments,
         )
 
-        if sync_to_convex:
+        if sync_to_cache:
             schoology_cache_store.update_course_assignments(
                 int(self.user_id), str(course_id), assignment_dicts, int(time.time() * 1000)
             )
@@ -722,7 +722,7 @@ class SchoologyService:
             Dictionary with success status and counts
         """
         # Fetch and cache courses
-        courses = self.get_courses(sync_to_convex=True)
+        courses = self.get_courses(sync_to_cache=True)
         now_ms = int(time.time() * 1000)
         assignments_by_course = self._fetch_assignments_for_sections([
             course["id"]

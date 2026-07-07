@@ -378,7 +378,7 @@ def run_section_sync(section_id: str, credential_user_id: int, owner_token: str)
 
     assignments = service.get_assignments(
         section_id,
-        sync_to_convex=False,
+        sync_to_cache=False,
         with_attachments=True,
     )
     store.heartbeat_section_run(section_id, owner_token, store.utcnow())

@@ -64,7 +64,7 @@ def refresh_eligible_user_memberships() -> dict[str, int]:
 
         eligible_count += 1
         try:
-            sections = service.get_sections(sync_to_convex=False)
+            sections = service.get_sections(sync_to_cache=False)
             store.refresh_user_section_memberships(user_id, sections, now)
             store.mark_user_sections_refreshed(user_id, now)
             refreshed_count += 1

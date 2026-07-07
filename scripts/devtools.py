@@ -45,21 +45,17 @@ REQUIRED_BACKEND_ENV = (
     "SCHOOLOGY_CONSUMER_KEY",
     "SCHOOLOGY_CONSUMER_SECRET",
     "ENCRYPTION_KEY",
-    "CONVEX_URL",
-    "CONVEX_BRIDGE_SECRET",
 )
 
 OPTIONAL_BACKEND_ENV = (
     "LLM_API_KEY",
     "LLM_MODEL",
-    "CHAT_INTERNAL_SECRET",
     "MOBILE_TOKEN_HASH_SECRET",
     "UPSTASH_REDIS_URL",
 )
 
 REQUIRED_FRONTEND_ENV = (
     "NEXT_PUBLIC_BACKEND_URL",
-    "NEXT_PUBLIC_CONVEX_URL",
 )
 
 OPTIONAL_FRONTEND_ENV = ("NEXT_PUBLIC_POSTHOG_KEY",)
@@ -67,13 +63,12 @@ OPTIONAL_FRONTEND_ENV = ("NEXT_PUBLIC_POSTHOG_KEY",)
 AUTO_BACKEND_DEFAULTS = {
     "FRONTEND_URL": "http://localhost:3112",
     "BACKEND_URL": "http://localhost:3111",
-    "CONVEX_URL": "http://127.0.0.1:3210",
     "SCHOOLOGY_DOMAIN": "https://app.schoology.com",
     "SCHOOLOGY_API_DOMAIN": "https://api.schoology.com",
     "RATELIMIT_STORAGE_URI": "memory://",
     "LLM_BASE_URL": "https://openrouter.ai/api/v1",
     "CHAT_STALE_AFTER_SECONDS": "120",
-    "CHAT_CONVEX_HEARTBEAT_MS": "5000",
+    "CHAT_HEARTBEAT_MS": "5000",
     "CHAT_SSE_HEARTBEAT_SECONDS": "15",
     "CHAT_REDIS_ACTIVE_TTL_SECONDS": "3600",
     "CHAT_REDIS_FINAL_TTL_SECONDS": "600",
@@ -108,8 +103,6 @@ SECRET_EXPORT_KEYS = (
     "SCHOOLOGY_CONSUMER_KEY",
     "SCHOOLOGY_CONSUMER_SECRET",
     "ENCRYPTION_KEY",
-    "CONVEX_BRIDGE_SECRET",
-    "CHAT_INTERNAL_SECRET",
     "MOBILE_TOKEN_HASH_SECRET",
     "LLM_API_KEY",
     "LLM_MODEL",
@@ -164,10 +157,6 @@ def prompt_yes_no(question: str, default: bool) -> bool:
         if value in {"n", "no"}:
             return False
         print("Enter y or n.")
-
-
-def normalize_url(value: str) -> str:
-    return value.rstrip("/")
 
 
 def is_macos() -> bool:
@@ -479,7 +468,6 @@ def seed_local_init_env() -> None:
         **AUTO_BACKEND_DEFAULTS,
         "FLASK_SECRET_KEY": backend_existing.get("FLASK_SECRET_KEY") or create_flask_secret(),
         "ENCRYPTION_KEY": backend_existing.get("ENCRYPTION_KEY") or create_fernet_key(),
-        "CONVEX_BRIDGE_SECRET": backend_existing.get("CONVEX_BRIDGE_SECRET") or create_chat_secret(),
         "MOBILE_TOKEN_HASH_SECRET": (
             backend_existing.get("MOBILE_TOKEN_HASH_SECRET") or create_chat_secret()
         ),
@@ -490,10 +478,6 @@ def seed_local_init_env() -> None:
     frontend_updates = dict(AUTO_FRONTEND_DEFAULTS)
     write_env_file(FRONTEND_ENV_FILE, frontend_updates, overwrite_mode="keep")
     print(f"- Ensured local defaults in {FRONTEND_ENV_FILE}")
-
-    synced_convex_url = update_backend_convex_url_from_frontend("keep")
-    if synced_convex_url:
-        print(f"- Synced backend CONVEX_URL to {synced_convex_url}")
 
 
 def load_env_file(path: Path) -> dict[str, str]:
@@ -583,16 +567,12 @@ def build_backend_updates(options: dict[str, bool], secrets_map: dict[str, str])
     updates = dict(AUTO_BACKEND_DEFAULTS)
     updates["FLASK_SECRET_KEY"] = secrets_map.get("FLASK_SECRET_KEY") or create_flask_secret()
     updates["ENCRYPTION_KEY"] = secrets_map.get("ENCRYPTION_KEY") or create_fernet_key()
-    updates["CONVEX_BRIDGE_SECRET"] = (
-        secrets_map.get("CONVEX_BRIDGE_SECRET") or create_chat_secret()
-    )
     updates["GOOGLE_CLIENT_ID"] = secrets_map["GOOGLE_CLIENT_ID"]
     updates["GOOGLE_CLIENT_SECRET"] = secrets_map["GOOGLE_CLIENT_SECRET"]
     updates["SCHOOLOGY_CONSUMER_KEY"] = secrets_map["SCHOOLOGY_CONSUMER_KEY"]
     updates["SCHOOLOGY_CONSUMER_SECRET"] = secrets_map["SCHOOLOGY_CONSUMER_SECRET"]
 
     if options["chat"]:
-        updates["CHAT_INTERNAL_SECRET"] = secrets_map.get("CHAT_INTERNAL_SECRET") or create_chat_secret()
         updates["LLM_API_KEY"] = secrets_map["LLM_API_KEY"]
         updates["LLM_MODEL"] = secrets_map["LLM_MODEL"]
         updates["UPSTASH_REDIS_URL"] = secrets_map["UPSTASH_REDIS_URL"]
@@ -600,17 +580,11 @@ def build_backend_updates(options: dict[str, bool], secrets_map: dict[str, str])
     if options["mobile"]:
         updates["MOBILE_TOKEN_HASH_SECRET"] = secrets_map.get("MOBILE_TOKEN_HASH_SECRET") or create_chat_secret()
 
-    if options["chat_network_mode"] == "public":
-        updates["BACKEND_URL"] = options["public_backend_url"]
-        updates["FRONTEND_URL"] = options["public_frontend_url"]
-
     return updates
 
 
 def build_frontend_updates(options: dict[str, bool], secrets_map: dict[str, str]) -> dict[str, str]:
     updates = dict(AUTO_FRONTEND_DEFAULTS)
-    if options["chat_network_mode"] == "public":
-        updates["NEXT_PUBLIC_BACKEND_URL"] = options["public_backend_url"]
     if secrets_map.get("NEXT_PUBLIC_POSTHOG_KEY"):
         updates["NEXT_PUBLIC_POSTHOG_KEY"] = secrets_map["NEXT_PUBLIC_POSTHOG_KEY"]
     return updates
@@ -625,35 +599,16 @@ def check_env_keys(values: dict[str, str], required: Iterable[str]) -> list[Doct
     return issues
 
 
-def update_backend_convex_url_from_frontend(overwrite_mode: str) -> str | None:
-    frontend_env = load_env_file(FRONTEND_ENV_FILE)
-    convex_url = frontend_env.get("NEXT_PUBLIC_CONVEX_URL", "").strip()
-    if not convex_url or convex_url.lower() == "null":
-        return None
-    write_env_file(
-        BACKEND_ENV_FILE,
-        {"CONVEX_URL": convex_url},
-        overwrite_mode=overwrite_mode,
-    )
-    return convex_url
-
-
 def detect_existing_state() -> dict[str, bool]:
     backend_env = load_env_file(BACKEND_ENV_FILE)
-    frontend_env = load_env_file(FRONTEND_ENV_FILE)
     dev_config = load_dev_config()
     return {
         "backend_env": BACKEND_ENV_FILE.exists(),
         "frontend_env": FRONTEND_ENV_FILE.exists(),
         "backend_venv": BACKEND_PYTHON.exists(),
         "frontend_node_modules": (FRONTEND_DIR / "node_modules").exists(),
-        "convex_url": bool(frontend_env.get("NEXT_PUBLIC_CONVEX_URL")),
         "chat_env": any(backend_env.get(key) for key in OPTIONAL_BACKEND_ENV),
-        "convex_mode": dev_config.get("CONVEX_DEV_MODE", "cloud"),
-        "public_backend_url": dev_config.get("CONVEX_PUBLIC_BACKEND_URL", ""),
-        "public_frontend_url": dev_config.get("CONVEX_PUBLIC_FRONTEND_URL", ""),
         "chat_enabled": dev_config.get("CHAT_ENABLED", "false").lower() == "true",
-        "chat_network_mode": dev_config.get("CHAT_NETWORK_MODE", "skip"),
     }
 
 
@@ -697,7 +652,7 @@ def doctor(component: str) -> list[DoctorIssue]:
         else:
             issues.extend(check_env_keys(load_env_file(BACKEND_ENV_FILE), REQUIRED_BACKEND_ENV))
 
-    if component in {"full", "frontend", "convex"}:
+    if component in {"full", "frontend"}:
         issues.extend(check_frontend_tools())
         issues.extend(check_expected_listener(3112, FRONTEND_DIR, "frontend"))
         if not (FRONTEND_DIR / "node_modules").exists():
@@ -710,24 +665,7 @@ def doctor(component: str) -> list[DoctorIssue]:
 
     if component == "full" and BACKEND_ENV_FILE.exists():
         backend_env = load_env_file(BACKEND_ENV_FILE)
-        frontend_env = load_env_file(FRONTEND_ENV_FILE) if FRONTEND_ENV_FILE.exists() else {}
-        frontend_convex_url = frontend_env.get("NEXT_PUBLIC_CONVEX_URL", "").strip()
-        backend_convex_url = backend_env.get("CONVEX_URL", "").strip()
-        if (
-            frontend_convex_url
-            and frontend_convex_url.lower() != "null"
-            and backend_convex_url
-            and backend_convex_url != frontend_convex_url
-            and dev_config.get("CONVEX_DEV_MODE", "cloud") != "local"
-        ):
-            issues.append(
-                DoctorIssue(
-                    "ERROR",
-                    "backend/.env CONVEX_URL does not match frontend/.env.local NEXT_PUBLIC_CONVEX_URL.",
-                )
-            )
         chat_enabled = dev_config.get("CHAT_ENABLED", "false").lower() == "true"
-        chat_mode = dev_config.get("CHAT_NETWORK_MODE", "skip")
         if chat_enabled:
             missing_chat = [key for key in OPTIONAL_BACKEND_ENV if not backend_env.get(key)]
             if missing_chat:
@@ -735,27 +673,6 @@ def doctor(component: str) -> list[DoctorIssue]:
                     DoctorIssue(
                         "ERROR",
                         "Chat is enabled but missing backend chat vars: " + ", ".join(missing_chat),
-                    )
-                )
-            if chat_mode == "public" and not dev_config.get("CONVEX_PUBLIC_BACKEND_URL"):
-                issues.append(
-                    DoctorIssue(
-                        "ERROR",
-                        "Chat public mode requires CONVEX_PUBLIC_BACKEND_URL in .pinewood-dev.",
-                    )
-                )
-            if chat_mode == "public" and not dev_config.get("CONVEX_PUBLIC_FRONTEND_URL"):
-                issues.append(
-                    DoctorIssue(
-                        "ERROR",
-                        "Chat public mode requires CONVEX_PUBLIC_FRONTEND_URL in .pinewood-dev.",
-                    )
-                )
-            if chat_mode == "skip":
-                issues.append(
-                    DoctorIssue(
-                        "WARN",
-                        "Chat is enabled, but backend reachability is set to skip. Chat requests will not reach Flask.",
                     )
                 )
         elif any(backend_env.get(key) for key in OPTIONAL_BACKEND_ENV):
@@ -807,65 +724,6 @@ def cmd_secret_export(_args: argparse.Namespace) -> int:
     return 0
 
 
-def remove_generated_frontend_gitignore() -> None:
-    frontend_gitignore = FRONTEND_DIR / ".gitignore"
-    if frontend_gitignore.exists():
-        frontend_gitignore.unlink()
-
-
-def run_convex_setup() -> bool:
-    dev_config = load_dev_config()
-    convex_mode = dev_config.get("CONVEX_DEV_MODE", "cloud")
-    print_header("Convex Setup")
-    print("The wizard will run Convex CLI once so it can log you in, link the shared project, and write NEXT_PUBLIC_CONVEX_URL.")
-    if not prompt_yes_no("Run Convex setup now?", True):
-        return False
-
-    try:
-        command = ["pnpm", "exec", "convex", "dev"]
-        if convex_mode == "local":
-            command.append("--local")
-        command.append("--once")
-        run_command(command, cwd=FRONTEND_DIR, interactive=True)
-        return True
-    except subprocess.CalledProcessError:
-        frontend_env = load_env_file(FRONTEND_ENV_FILE)
-        if frontend_env.get("CONVEX_DEPLOYMENT") and frontend_env.get("NEXT_PUBLIC_CONVEX_URL"):
-            print("Convex reported an error, but the deployment appears to be linked locally. Continuing with env sync.")
-            return True
-        print("Convex setup did not complete successfully.")
-        return False
-    finally:
-        remove_generated_frontend_gitignore()
-
-
-def sync_convex_env(updates: dict[str, str]) -> bool:
-    import time
-    print_header("Convex Deployment Env")
-    dev_config = load_dev_config()
-    convex_mode = dev_config.get("CONVEX_DEV_MODE", "cloud")
-    command = ["pnpm", "exec", "convex", "dev"]
-    if convex_mode == "local":
-        command.append("--local")
-    print("Starting convex dev in background so env vars can be written...")
-    proc = subprocess.Popen(command, cwd=FRONTEND_DIR, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    try:
-        # Give the dev server a moment to initialize before pushing env vars
-        time.sleep(5)
-        for key, value in updates.items():
-            run_command(["pnpm", "exec", "convex", "env", "set", key, value], cwd=FRONTEND_DIR)
-        return True
-    except subprocess.CalledProcessError:
-        print("Failed to push one or more env vars into Convex.")
-        return False
-    finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-
-
 def prompt_for_missing(required_keys: Iterable[str], current: dict[str, str]) -> dict[str, str]:
     updates = dict(current)
     for key in required_keys:
@@ -899,59 +757,12 @@ def choose_options(existing: dict[str, bool]) -> tuple[str, dict[str, bool]]:
         "tunnel": False,
         "analytics": False,
         "mobile": False,
-        "chat_network_mode": existing.get("chat_network_mode", "skip"),
-        "public_backend_url": existing.get("public_backend_url", ""),
-        "public_frontend_url": existing.get("public_frontend_url", ""),
     }
 
     options["chat"] = prompt_yes_no("Set up chat locally?", options["chat"])
     options["analytics"] = prompt_yes_no("Configure analytics now?", False)
     options["mobile"] = prompt_yes_no("Generate optional mobile local settings?", False)
-
-    if options["chat"]:
-        print_header("Chat Networking")
-        chat_mode = prompt_choice(
-            "How should Convex reach the backend for chat?",
-            [
-                ("l", "Run Convex locally so it can call http://localhost:3111 directly"),
-                ("p", "Use a public backend URL, for example a Cloudflare tunnel"),
-                ("s", "Skip chat bridge networking for now"),
-            ],
-            {
-                "local": "l",
-                "public": "p",
-                "skip": "s",
-            }.get(options["chat_network_mode"], "l"),
-        )
-        options["chat_network_mode"] = {"l": "local", "p": "public", "s": "skip"}[chat_mode]
-        if options["chat_network_mode"] == "public":
-            options["tunnel"] = prompt_yes_no("Do you want to set up Cloudflare tunnel support now?", False)
-            while True:
-                default_public_url = options["public_backend_url"]
-                suffix = f" [{default_public_url}]" if default_public_url else ""
-                value = input(f"Paste the public backend URL the app should use{suffix}\n> ").strip()
-                if not value and default_public_url:
-                    value = default_public_url
-                if value:
-                    options["public_backend_url"] = normalize_url(value)
-                    break
-                print("A public backend URL is required for chat public mode.")
-            while True:
-                default_public_frontend_url = options["public_frontend_url"]
-                suffix = f" [{default_public_frontend_url}]" if default_public_frontend_url else ""
-                value = input(f"Paste the public frontend URL the app should use{suffix}\n> ").strip()
-                if not value and default_public_frontend_url:
-                    value = default_public_frontend_url
-                if value:
-                    options["public_frontend_url"] = normalize_url(value)
-                    break
-                print("A public frontend URL is required for chat public mode.")
-        else:
-            options["tunnel"] = False
-            options["public_backend_url"] = ""
-            options["public_frontend_url"] = ""
-    else:
-        options["tunnel"] = prompt_yes_no("Set up Cloudflare tunnel support now?", False)
+    options["tunnel"] = prompt_yes_no("Set up Cloudflare tunnel support now?", False)
     return profile, options
 
 
@@ -1006,15 +817,8 @@ def summarize(existing: dict[str, bool], profile: str, options: dict[str, bool])
     print(f"- frontend/.env.local present: {'yes' if existing['frontend_env'] else 'no'}")
     print(f"- backend/env present: {'yes' if existing['backend_venv'] else 'no'}")
     print(f"- frontend/node_modules present: {'yes' if existing['frontend_node_modules'] else 'no'}")
-    print(f"- Convex URL already configured: {'yes' if existing['convex_url'] else 'no'}")
-    print(f"- Convex dev mode: {existing['convex_mode']}")
     print(f"- Selected profile: {profile_labels[profile]}")
     print(f"- Chat: {'on' if options['chat'] else 'off'}")
-    if options["chat"]:
-        print(f"- Chat networking: {options['chat_network_mode']}")
-        if options["chat_network_mode"] == "public":
-            print(f"- Public backend URL: {options['public_backend_url'] or '(missing)'}")
-            print(f"- Public frontend URL: {options['public_frontend_url'] or '(missing)'}")
     print(f"- Tunnel: {'on' if options['tunnel'] else 'off'}")
     print(f"- Analytics: {'on' if options['analytics'] else 'off'}")
     print(f"- Mobile local settings: {'on' if options['mobile'] else 'off'}")
@@ -1022,7 +826,7 @@ def summarize(existing: dict[str, bool], profile: str, options: dict[str, bool])
 
 def cmd_setup(_args: argparse.Namespace) -> int:
     print("Pinewood One setup wizard")
-    print("This will install local dependencies, write env files, help with Convex setup, and validate the workspace.")
+    print("This will install local dependencies, write env files, and validate the workspace.")
 
     existing = detect_existing_state()
     profile, options = choose_options(existing)
@@ -1066,10 +870,6 @@ def cmd_setup(_args: argparse.Namespace) -> int:
     frontend_updates = build_frontend_updates(options, secrets_map)
     dev_config_updates = {
         "CHAT_ENABLED": "true" if options["chat"] else "false",
-        "CHAT_NETWORK_MODE": options["chat_network_mode"],
-        "CONVEX_DEV_MODE": "local" if options["chat"] and options["chat_network_mode"] == "local" else "cloud",
-        "CONVEX_PUBLIC_BACKEND_URL": options["public_backend_url"] if options["chat_network_mode"] == "public" else "",
-        "CONVEX_PUBLIC_FRONTEND_URL": options["public_frontend_url"] if options["chat_network_mode"] == "public" else "",
     }
 
     print_header("Writing Env Files")
@@ -1079,33 +879,6 @@ def cmd_setup(_args: argparse.Namespace) -> int:
     print(f"- Wrote {BACKEND_ENV_FILE}")
     print(f"- Wrote {FRONTEND_ENV_FILE}")
     print(f"- Wrote {DEV_CONFIG_FILE}")
-
-    convex_needs_setup = (not existing["convex_url"]) or (
-        existing.get("convex_mode", "cloud") != dev_config_updates["CONVEX_DEV_MODE"]
-    )
-    convex_ready = run_convex_setup() if convex_needs_setup else True
-    if convex_ready:
-        synced_convex_url = update_backend_convex_url_from_frontend(overwrite_mode)
-        if synced_convex_url:
-            print(f"- Synced backend CONVEX_URL to {synced_convex_url}")
-
-    if convex_ready:
-        convex_backend_url = frontend_updates["NEXT_PUBLIC_BACKEND_URL"]
-        if options["chat"] and options["chat_network_mode"] == "public":
-            convex_backend_url = options["public_backend_url"]
-        convex_env_updates = {
-            "NEXT_PUBLIC_BACKEND_URL": convex_backend_url,
-            "CONVEX_BRIDGE_SECRET": backend_updates["CONVEX_BRIDGE_SECRET"],
-        }
-        if options["chat"] and options["chat_network_mode"] != "skip":
-            chat_backend_url = (
-                options["public_backend_url"]
-                if options["chat_network_mode"] == "public"
-                else backend_updates["BACKEND_URL"]
-            )
-            convex_env_updates["BACKEND_URL"] = chat_backend_url
-            convex_env_updates["CHAT_INTERNAL_SECRET"] = backend_updates["CHAT_INTERNAL_SECRET"]
-        sync_convex_env(convex_env_updates)
 
     if options["tunnel"]:
         print_header("Cloudflare Tunnel Login")
@@ -1128,15 +901,6 @@ def cmd_setup(_args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_print_convex_command(_args: argparse.Namespace) -> int:
-    dev_config = load_dev_config()
-    command = "cd frontend && pnpm exec convex dev"
-    if dev_config.get("CONVEX_DEV_MODE", "cloud") == "local":
-        command += " --local"
-    print(command)
-    return 0
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Pinewood One monorepo developer tooling")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1150,7 +914,7 @@ def build_parser() -> argparse.ArgumentParser:
     doctor_parser = subparsers.add_parser("doctor", help="Check local setup")
     doctor_parser.add_argument(
         "--component",
-        choices=("full", "backend", "frontend", "convex"),
+        choices=("full", "backend", "frontend"),
         default="full",
         help="Restrict checks to a single component",
     )
@@ -1161,9 +925,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print a paste-ready secrets block for setup",
     )
     secret_export_parser.set_defaults(func=cmd_secret_export)
-
-    convex_parser = subparsers.add_parser("print-convex-command", help="Print the convex dev command for the current local mode")
-    convex_parser.set_defaults(func=cmd_print_convex_command)
 
     return parser
 
