@@ -57,9 +57,16 @@ def create_app():
 
 
 if __name__ == "__main__":
+    # Never enable the Werkzeug debugger by default: it exposes an interactive
+    # console and full stack traces to anyone who can reach the port. Opt in
+    # explicitly via FLASK_DEBUG, and force it off in production regardless.
+    debug = (
+        os.environ.get("FLASK_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
+        and not Config.is_production()
+    )
     app = create_app()
     app.run(
-        debug=True,
+        debug=debug,
         threaded=True,
         use_reloader=False,
         port=3111,
