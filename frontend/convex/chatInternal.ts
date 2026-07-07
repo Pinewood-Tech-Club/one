@@ -171,6 +171,23 @@ export const getGenerationCancelState = internalQuery({
   },
 });
 
+export const getGenerationOwner = internalQuery({
+  args: {
+    generationId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const generationId = ctx.db.normalizeId("chatGenerations", args.generationId);
+    if (!generationId) {
+      return null;
+    }
+    const generation = await ctx.db.get(generationId);
+    if (!generation) {
+      return null;
+    }
+    return { userId: generation.userId };
+  },
+});
+
 export const markGenerationStreaming = internalMutation({
   args: {
     generationId: v.id("chatGenerations"),
@@ -604,7 +621,7 @@ export const kickoffBackendGeneration = internalAction({
   args: {
     generationId: v.id("chatGenerations"),
   },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<{ skipped: boolean; reason?: string; status?: number }> => {
     const context = await ctx.runQuery(internal.chatInternal.getGenerationContext, {
       generationId: args.generationId,
     });
@@ -637,7 +654,7 @@ export const kickoffBackendGeneration = internalAction({
           "Content-Type": "application/json",
           "X-Internal-Chat-Secret": internalSecret,
         },
-        body: JSON.stringify({ generationId: args.generationId }),
+        body: JSON.stringify({ generationId: args.generationId, userId: context.userId }),
       });
 
       if (response.ok) {
