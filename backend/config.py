@@ -106,6 +106,7 @@ class Config:
     MAIN_DB_PATH = "main.db"
     SESSIONS_DB_PATH = "api_sessions.db"
     SCRAPER_DB_PATH = os.environ.get("SCRAPER_DB_PATH", str(BACKEND_ROOT / "scraper.db"))
+    CHAT_DB_PATH = os.environ.get("CHAT_DB_PATH", str(BACKEND_ROOT / "chat.db"))
 
     # Convex configuration
     CONVEX_URL = os.environ.get("CONVEX_URL", "http://127.0.0.1:3210")
@@ -124,7 +125,16 @@ class Config:
     CHAT_INTERNAL_SECRET = os.environ.get("CHAT_INTERNAL_SECRET")
     CHAT_STALE_AFTER_SECONDS = int(os.environ.get("CHAT_STALE_AFTER_SECONDS", "120"))
     CHAT_CONVEX_HEARTBEAT_MS = int(os.environ.get("CHAT_CONVEX_HEARTBEAT_MS", "5000"))
+    CHAT_HEARTBEAT_MS = int(
+        os.environ.get("CHAT_HEARTBEAT_MS")
+        or os.environ.get("CHAT_CONVEX_HEARTBEAT_MS", "5000")
+    )
+    CHAT_REAPER_INTERVAL_SECONDS = int(os.environ.get("CHAT_REAPER_INTERVAL_SECONDS", "60"))
     CHAT_SSE_HEARTBEAT_SECONDS = int(os.environ.get("CHAT_SSE_HEARTBEAT_SECONDS", "15"))
+    APP_EVENTS_TTL_SECONDS = int(os.environ.get("APP_EVENTS_TTL_SECONDS", "3600"))
+    APP_EVENTS_SSE_HEARTBEAT_SECONDS = int(
+        os.environ.get("APP_EVENTS_SSE_HEARTBEAT_SECONDS", "15")
+    )
     CHAT_REDIS_ACTIVE_TTL_SECONDS = int(os.environ.get("CHAT_REDIS_ACTIVE_TTL_SECONDS", "3600"))
     CHAT_REDIS_FINAL_TTL_SECONDS = int(os.environ.get("CHAT_REDIS_FINAL_TTL_SECONDS", "600"))
     UPSTASH_REDIS_URL = os.environ.get("UPSTASH_REDIS_URL")
