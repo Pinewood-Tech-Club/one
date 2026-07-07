@@ -108,23 +108,13 @@ class Config:
     SCRAPER_DB_PATH = os.environ.get("SCRAPER_DB_PATH", str(BACKEND_ROOT / "scraper.db"))
     CHAT_DB_PATH = os.environ.get("CHAT_DB_PATH", str(BACKEND_ROOT / "chat.db"))
 
-    # Convex configuration
-    CONVEX_URL = os.environ.get("CONVEX_URL", "http://127.0.0.1:3210")
-    CONVEX_ADMIN_KEY = os.environ.get("CONVEX_ADMIN_KEY")
-    CONVEX_BRIDGE_SECRET = (
-        os.environ.get("CONVEX_BRIDGE_SECRET")
-        or os.environ.get("CHAT_INTERNAL_SECRET")
-    )
-
     # Chat / LLM configuration
     LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "https://openrouter.ai/api/v1")
     LLM_API_KEY = os.environ.get("LLM_API_KEY")
     LLM_MODEL = os.environ.get("LLM_MODEL", "")
     LLM_CONNECT_TIMEOUT_SECONDS = float(os.environ.get("LLM_CONNECT_TIMEOUT_SECONDS", "10"))
     LLM_IDLE_TIMEOUT_SECONDS = float(os.environ.get("LLM_IDLE_TIMEOUT_SECONDS", "30"))
-    CHAT_INTERNAL_SECRET = os.environ.get("CHAT_INTERNAL_SECRET")
     CHAT_STALE_AFTER_SECONDS = int(os.environ.get("CHAT_STALE_AFTER_SECONDS", "120"))
-    CHAT_CONVEX_HEARTBEAT_MS = int(os.environ.get("CHAT_CONVEX_HEARTBEAT_MS", "5000"))
     CHAT_HEARTBEAT_MS = int(
         os.environ.get("CHAT_HEARTBEAT_MS")
         or os.environ.get("CHAT_CONVEX_HEARTBEAT_MS", "5000")
@@ -214,13 +204,6 @@ class Config:
         else:
             print("Schoology OAuth configured with official developer credentials.")
             print(f"Domain: {cls.SCHOOLOGY_DOMAIN}")
-
-        if not cls.CONVEX_BRIDGE_SECRET:
-            print(
-                "WARNING: Convex bridge secret is not configured. "
-                "Backend-triggered Convex internal updates will fail until "
-                "CONVEX_BRIDGE_SECRET or CHAT_INTERNAL_SECRET is set in both backend and Convex."
-            )
 
         if not Path(cls.GOOGLE_DRIVE_TOKEN_FILE).exists():
             print(

@@ -4,7 +4,6 @@ import { ThemeProvider } from "next-themes";
 import "./globals.css";
 import "katex/dist/katex.min.css";
 import "highlight.js/styles/github.css";
-import { ConvexClientProvider } from "@/components/ConvexClientProvider";
 import { LayoutWrapper } from "@/components/LayoutWrapper";
 
 const inter = Inter({
@@ -31,11 +30,9 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          <ConvexClientProvider>
-            <LayoutWrapper>
-              {children}
-            </LayoutWrapper>
-          </ConvexClientProvider>
+          <LayoutWrapper>
+            {children}
+          </LayoutWrapper>
         </ThemeProvider>
       </body>
     </html>

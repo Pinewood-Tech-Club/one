@@ -1,3 +1,0 @@
-"""
-Internal chat routes package.
-"""

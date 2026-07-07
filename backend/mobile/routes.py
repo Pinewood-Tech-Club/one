@@ -9,7 +9,7 @@ from config import Config
 from db.sessions import create_session
 from extensions import limiter
 from services.mobile import service
-from onboarding import get_user as convex_get_user
+from db import app_users
 from services.schoology.refresh import start_schoology_refresh_for_user
 
 mobile_bp = Blueprint("mobile_api", __name__, url_prefix="/api/mobile/v1")
@@ -222,35 +222,17 @@ def mobile_auth_logout(user, token_payload):
 @mobile_bp.route("/me")
 @mobile_auth_required
 def mobile_me(user, token_payload):
-    onboarding_step = "welcome"
-    schoology_connected = False
-    profile_picture_url = None
-
-    try:
-        convex_user = convex_get_user(Config.CONVEX_URL, str(user["id"]))
-        if convex_user:
-            onboarding_step = convex_user.get("onboardingStep", "welcome")
-            schoology_connected = convex_user.get("schoologyConnected", False)
-            profile_picture_url = convex_user.get("profilePictureUrl")
-    except Exception:
-        pass
-
+    state = app_users.get_user_app_state(user["id"]) or {}
     return jsonify(
         {
             "user_id": user["id"],
             "email": user["email"],
             "name": user["name"],
-            "onboarding_step": onboarding_step,
-            "schoology_connected": schoology_connected,
-            "profile_picture_url": profile_picture_url,
+            "onboarding_step": state.get("onboardingStep", "welcome"),
+            "schoology_connected": bool(state.get("schoologyConnected", False)),
+            "profile_picture_url": state.get("profilePictureUrl"),
         }
     )
-
-
-@mobile_bp.route("/convex/token")
-@mobile_auth_required
-def mobile_convex_token(user, token_payload):
-    return jsonify(service.create_mobile_convex_token(user))
 
 
 @mobile_bp.route("/web/session-ticket", methods=["POST"])

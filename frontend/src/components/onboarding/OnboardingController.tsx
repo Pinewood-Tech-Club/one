@@ -1,26 +1,39 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { useQuery } from 'convex/react';
-import { api } from '../../../convex/_generated/api';
+import { useLiveQuery } from '@/hooks/useLiveQuery';
+import { getUser, type ApiUser, type OnboardingStep } from '@/lib/api';
 import { WelcomeStep } from './WelcomeStep';
 import { ConnectLmsStep } from './ConnectLmsStep';
 import { SmartConsentStep } from './SmartConsentStep';
 import { mobileBridge } from '@/lib/mobileBridge';
 
 type OnboardingMode = 'web' | 'mobile';
-type OnboardingStep = 'welcome' | 'connect_lms' | 'smart_consent' | 'completed';
 
 interface OnboardingControllerProps {
   mode?: OnboardingMode;
 }
 
 export function OnboardingController({ mode = 'web' }: OnboardingControllerProps) {
-  const convexUser = useQuery(api.users.getUser);
+  // The user.updated event covers the Schoology-OAuth path (full-page redirect)
+  // and other tabs; handleUserUpdate advances synchronously from a mutation's
+  // own response so a click never waits on the event round-trip.
+  const { data, error } = useLiveQuery<ApiUser>({
+    fetcher: getUser,
+    events: [{ type: 'user.updated', apply: (d) => (d.user ?? d) as ApiUser }],
+  });
+  const [user, setUser] = useState<ApiUser | undefined>(undefined);
   const [completionBridgeError, setCompletionBridgeError] = useState<string | null>(null);
 
-  const currentStep: OnboardingStep | null | undefined =
-    (convexUser?.onboardingStep as OnboardingStep | undefined) ?? null;
+  useEffect(() => {
+    if (data) setUser(data);
+  }, [data]);
+
+  const handleUserUpdate = useCallback((updated: ApiUser) => {
+    setUser(updated);
+  }, []);
+
+  const currentStep: OnboardingStep | null | undefined = user?.onboarding_step ?? null;
 
   const finalizeOnboarding = useCallback(async () => {
     if (mode === 'mobile') {
@@ -61,7 +74,7 @@ export function OnboardingController({ mode = 'web' }: OnboardingControllerProps
   }, [currentStep, finalizeOnboarding]);
 
   // Loading state
-  if (convexUser === undefined) {
+  if (user === undefined && !error) {
     return (
       <div className="fixed inset-0 bg-[#1b8f4b] flex items-center justify-center">
         <div className="w-8 h-8 border-3 border-white/30 border-t-white rounded-full animate-spin" />
@@ -69,7 +82,8 @@ export function OnboardingController({ mode = 'web' }: OnboardingControllerProps
     );
   }
 
-  if (convexUser === null) {
+  // Unauthenticated / fetch failure.
+  if (user === undefined) {
     if (mode === 'mobile') {
       return (
         <div className="fixed inset-0 bg-[#0f172a] text-white flex items-center justify-center px-6">
@@ -95,11 +109,11 @@ export function OnboardingController({ mode = 'web' }: OnboardingControllerProps
 
   switch (currentStep) {
     case 'welcome':
-      return <WelcomeStep />;
+      return <WelcomeStep onUserUpdate={handleUserUpdate} />;
     case 'connect_lms':
-      return <ConnectLmsStep mode={mode} />;
+      return <ConnectLmsStep mode={mode} onUserUpdate={handleUserUpdate} />;
     case 'smart_consent':
-      return <SmartConsentStep />;
+      return <SmartConsentStep onUserUpdate={handleUserUpdate} />;
     case 'completed':
       if (mode === 'mobile' && completionBridgeError) {
         return (
@@ -136,6 +150,6 @@ export function OnboardingController({ mode = 'web' }: OnboardingControllerProps
         </div>
       );
     default:
-      return <WelcomeStep />;
+      return <WelcomeStep onUserUpdate={handleUserUpdate} />;
   }
 }

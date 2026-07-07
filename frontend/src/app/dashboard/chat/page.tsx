@@ -2,11 +2,19 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { usePathname } from 'next/navigation';
-import { useQuery, useMutation } from 'convex/react';
 import { ChevronUp, BadgePlus, MessageCircleMore, Check, Plus } from 'lucide-react';
-import { api } from '../../../../convex/_generated/api';
-import type { Id } from '../../../../convex/_generated/dataModel';
-import { useConvexAuthReady } from '@/components/ConvexClientProvider';
+import {
+  ApiError,
+  cancelGeneration,
+  getActiveGeneration,
+  getChatMessages,
+  getChatThreads,
+  sendChatMessage,
+} from '@/lib/api';
+import type { ChatMessage, ChatStatus, ChatThread, ChatGeneration } from '@/lib/api';
+import { useAppEvents } from '@/hooks/useAppEvents';
+import { useLiveQuery } from '@/hooks/useLiveQuery';
+import type { LiveQueryEventConfig } from '@/hooks/useLiveQuery';
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
@@ -19,11 +27,12 @@ type StreamingState = {
   content: string;
   status: string;
   activity: string | null;
-  generationId: Id<'chatGenerations'>;
+  generationId: string;
+  // Known for sends from this tab; undefined on resume. Lets the terminal
+  // handoff write the final message under its real id.
+  assistantMessageId?: string;
   toolCalls: StreamingToolCall[];
 } | null;
-
-type Thread = { _id: Id<'chatThreads'>; title: string; lastMessageAt: number };
 
 type StreamingToolCall = {
   sequence: number;
@@ -35,6 +44,20 @@ type StreamingToolCall = {
   errorText?: string;
 };
 
+const ACTIVE_STATUSES = new Set(['queued', 'streaming']);
+const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
+
+// Grace period before force-clearing streaming after an app-channel terminal
+// event: the token SSE terminal / chat.message.created normally complete the
+// handoff first and keep the streamed text on screen.
+const TERMINAL_EVENT_GRACE_MS = 1_500;
+const SSE_RETRY_DELAY_MS = 1_000;
+const SSE_REOPEN_DELAY_MS = 2_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function normalizePathname(pathname: string): string {
   if (pathname.length > 1 && pathname.endsWith('/')) {
     return pathname.slice(0, -1);
@@ -43,7 +66,7 @@ function normalizePathname(pathname: string): string {
   return pathname;
 }
 
-function getChatUrl(threadId: Id<'chatThreads'> | null): string {
+function getChatUrl(threadId: string | null): string {
   return threadId ? `/chat/#${threadId}` : '/chat/';
 }
 
@@ -51,6 +74,27 @@ function truncateThreadName(name: string): string {
   if (name.length <= 36) return name;
   return `${name.slice(0, 16)}…${name.slice(-16)}`;
 }
+
+function fetchThreads(): Promise<ChatThread[]> {
+  return getChatThreads().then((response) => response.threads);
+}
+
+function applyThreadEvent(
+  data: Record<string, unknown>,
+  prev: ChatThread[] | undefined,
+): ChatThread[] | 'refetch' {
+  const thread = data.thread as ChatThread | undefined;
+  if (!prev || !thread || typeof thread._id !== 'string') return 'refetch';
+  const next = prev.filter((t) => t._id !== thread._id);
+  next.push(thread);
+  next.sort((a, b) => b.updatedAt - a.updatedAt);
+  return next;
+}
+
+const THREAD_EVENTS: LiveQueryEventConfig<ChatThread[]>[] = [
+  { type: 'chat.thread.created', apply: applyThreadEvent },
+  { type: 'chat.thread.updated', apply: applyThreadEvent },
+];
 
 function useTypewriter(target: string, threadId: string | null, charMs = 50): string {
   const [displayed, setDisplayed] = useState(target);
@@ -103,72 +147,104 @@ function useTypewriter(target: string, threadId: string | null, charMs = 50): st
 // ── SSE parsing hook ──────────────────────────────────────────────────────────
 
 function useSSEStream(
-  generationId: Id<'chatGenerations'> | null,
+  generationId: string | null,
+  attempt: number,
   onSnapshot: (data: Record<string, unknown>) => void,
   onDelta: (data: Record<string, unknown>) => void,
   onToolCall: (data: Record<string, unknown>) => void,
   onTerminal: (data: Record<string, unknown>) => void,
+  onStreamDead: () => void,
 ) {
+  const onStreamDeadRef = useRef(onStreamDead);
+  useEffect(() => {
+    onStreamDeadRef.current = onStreamDead;
+  });
+
   useEffect(() => {
     if (!generationId) return;
 
     const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL ?? '';
     const url = `${backendUrl}/api/chat/generations/${generationId}/events`;
     const controller = new AbortController();
+    let lastEventId: string | null = null;
+    let terminated = false;
 
-    (async () => {
-      try {
-        const res = await fetch(url, {
-          credentials: 'include',
-          signal: controller.signal,
-          headers: { Accept: 'text/event-stream' },
-        });
+    const consume = async (useLastEventId: boolean): Promise<void> => {
+      const res = await fetch(url, {
+        credentials: 'include',
+        signal: controller.signal,
+        headers: {
+          Accept: 'text/event-stream',
+          ...(useLastEventId && lastEventId ? { 'Last-Event-ID': lastEventId } : {}),
+        },
+      });
 
-        if (!res.ok || !res.body) return;
+      if (!res.ok || !res.body) throw new Error(`SSE HTTP ${res.status}`);
 
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-        let currentEvent = '';
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let currentEvent = '';
+      let currentId = '';
 
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) return;
 
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() ?? '';
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
 
-          for (const line of lines) {
-            if (line.startsWith('event:')) {
-              currentEvent = line.slice(6).trim();
-            } else if (line.startsWith('data:')) {
-              try {
-                const payload = JSON.parse(line.slice(5).trim());
-                if (currentEvent === 'snapshot') onSnapshot(payload);
-                else if (currentEvent === 'delta') onDelta(payload);
-                else if (currentEvent === 'tool_call') onToolCall(payload);
-                else if (currentEvent === 'terminal') {
-                  onTerminal(payload);
-                  return;
-                }
-              } catch {
-                // malformed JSON — ignore
+        for (const line of lines) {
+          if (line.startsWith('id:')) {
+            currentId = line.slice(3).trim();
+          } else if (line.startsWith('event:')) {
+            currentEvent = line.slice(6).trim();
+          } else if (line.startsWith('data:')) {
+            if (currentId) lastEventId = currentId;
+            try {
+              const payload = JSON.parse(line.slice(5).trim());
+              if (currentEvent === 'snapshot') onSnapshot(payload);
+              else if (currentEvent === 'delta') onDelta(payload);
+              else if (currentEvent === 'tool_call') onToolCall(payload);
+              else if (currentEvent === 'terminal') {
+                terminated = true;
+                onTerminal(payload);
+                return;
               }
-              currentEvent = '';
+            } catch {
+              // malformed JSON — ignore
             }
+            currentEvent = '';
+            currentId = '';
           }
         }
-      } catch (err: unknown) {
-        if (err instanceof Error && err.name !== 'AbortError') {
+      }
+    };
+
+    (async () => {
+      // Initial attempt plus one Last-Event-ID replay retry on transport
+      // error; if both fail without a terminal event, hand off to the page
+      // (re-fetch active-generation and reopen with a fresh snapshot).
+      for (let i = 0; i < 2 && !terminated; i++) {
+        try {
+          if (i > 0) await sleep(SSE_RETRY_DELAY_MS);
+          if (controller.signal.aborted) return;
+          await consume(i > 0);
+          if (terminated) return;
+          // Stream ended without a terminal event — treat as a drop.
+        } catch (err: unknown) {
+          if (controller.signal.aborted) return;
+          if (err instanceof Error && err.name === 'AbortError') return;
           console.error('[SSE] Error:', err);
         }
       }
+      if (!terminated && !controller.signal.aborted) onStreamDeadRef.current();
     })();
 
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [generationId]);
+  }, [generationId, attempt]);
 }
 
 // ── Status indicator ──────────────────────────────────────────────────────────
@@ -371,9 +447,9 @@ function Composer({
   onSend,
   disabled,
 }: {
-  threads: Thread[] | undefined;
-  selectedThreadId: Id<'chatThreads'> | null;
-  onSelectThread: (id: Id<'chatThreads'>) => void;
+  threads: ChatThread[] | undefined;
+  selectedThreadId: string | null;
+  onSelectThread: (id: string) => void;
   onNewChat: () => void;
   inputValue: string;
   setInputValue: (v: string) => void;
@@ -553,27 +629,60 @@ function Composer({
 export default function ChatPage() {
   const pathname = usePathname();
   const isChatRoute = normalizePathname(pathname) === '/chat';
-  const [selectedThreadId, setSelectedThreadId] = useState<Id<'chatThreads'> | null>(null);
+  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
   const [hashInitialized, setHashInitialized] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [streaming, setStreaming] = useState<StreamingState>(null);
+  const [messages, setMessages] = useState<ChatMessage[] | undefined>(undefined);
+  const [cancelRequested, setCancelRequested] = useState(false);
+  const [forceNotEntitled, setForceNotEntitled] = useState(false);
+  const [sseAttempt, setSseAttempt] = useState(0);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const selectedThreadIdRef = useRef<string | null>(null);
+  const streamingRef = useRef<StreamingState>(null);
+  // Thread id just created/entered by a send from this tab — the thread-change
+  // effect keeps the optimistic messages instead of wiping to a loading state.
+  const sentThreadRef = useRef<string | null>(null);
 
-  const authReady = useConvexAuthReady();
-  const threads = useQuery(api.chat.listThreads, authReady ? {} : 'skip');
-  const messages = useQuery(
-    api.chat.listMessages,
-    authReady && selectedThreadId ? { threadId: selectedThreadId } : 'skip',
-  );
-  const activeGeneration = useQuery(
-    api.chat.getActiveGeneration,
-    authReady && selectedThreadId ? { threadId: selectedThreadId } : 'skip',
+  useEffect(() => {
+    selectedThreadIdRef.current = selectedThreadId;
+  }, [selectedThreadId]);
+  useEffect(() => {
+    streamingRef.current = streaming;
+  }, [streaming]);
+
+  const {
+    data: threads,
+    error: threadsError,
+    refetch: refetchThreads,
+  } = useLiveQuery<ChatThread[]>({
+    fetcher: fetchThreads,
+    events: THREAD_EVENTS,
+  });
+
+  const loadMessages = useCallback(
+    async (threadId: string, opts?: { background?: boolean }) => {
+      if (!opts?.background) setMessages(undefined);
+      try {
+        const { messages: fetched } = await getChatMessages(threadId);
+        if (selectedThreadIdRef.current !== threadId) return;
+        setMessages(fetched);
+      } catch (err) {
+        if (selectedThreadIdRef.current !== threadId) return;
+        if (err instanceof ApiError && err.status === 403) {
+          setForceNotEntitled(true);
+          return;
+        }
+        console.error('[Chat] loadMessages failed:', err);
+        if (!opts?.background) setMessages([]);
+      }
+    },
+    [],
   );
 
-  const sendMessageMutation = useMutation(api.chat.sendMessage);
-  const requestCancelMutation = useMutation(api.chat.requestCancel);
+  // ── Token-SSE handlers (rendering pipeline unchanged) ──────────────────────
 
   const onSnapshot = useCallback((data: Record<string, unknown>) => {
     setStreaming((prev) =>
@@ -656,50 +765,209 @@ export default function ChatPage() {
     });
   }, []);
 
-  const onTerminal = useCallback((data: Record<string, unknown>) => {
-    setStreaming(null);
-    if (data.status === 'failed') {
-      console.error('[Chat] Generation failed:', data.errorMessage);
-    }
-  }, []);
-
-  useSSEStream(streaming?.generationId ?? null, onSnapshot, onDelta, onToolCall, onTerminal);
-
-  useEffect(() => {
-    if (!activeGeneration) return;
-    if (streaming) {
-      setStreaming((prev) =>
-        prev
-          ? {
-              ...prev,
-              activity: (activeGeneration.activity as string | null) ?? prev.activity,
-              status: activeGeneration.status,
-            }
-          : null,
-      );
-    } else {
-      setStreaming({
-        content: '',
-        status: activeGeneration.status,
-        activity: (activeGeneration.activity as string | null) ?? null,
-        generationId: activeGeneration._id,
-        toolCalls: [],
-      });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeGeneration?._id, activeGeneration?.activity, activeGeneration?.status]);
-
-  useEffect(() => {
-    if (activeGeneration === null && streaming) {
+  // Terminal handoff: KEEP the streamed text — materialize the final
+  // assistant message locally, then reconcile in the background.
+  const onTerminal = useCallback(
+    (data: Record<string, unknown>) => {
+      const current = streamingRef.current;
       setStreaming(null);
+      setCancelRequested(false);
+      if (data.status === 'failed') {
+        console.error('[Chat] Generation failed:', data.errorMessage);
+      }
+      if (!current) return;
+
+      const content = typeof data.content === 'string' ? data.content : current.content;
+      const status: ChatStatus =
+        typeof data.status === 'string' && TERMINAL_STATUSES.has(data.status)
+          ? (data.status as ChatStatus)
+          : 'completed';
+      const error = typeof data.errorMessage === 'string' ? data.errorMessage : null;
+      const threadId = selectedThreadIdRef.current;
+      const finalId = current.assistantMessageId ?? `gen-${current.generationId}`;
+      const now = Date.now();
+
+      setMessages((prev) => {
+        if (!prev) return prev;
+        const idx = prev.findIndex((m) => m._id === finalId);
+        if (idx >= 0) {
+          const next = [...prev];
+          next[idx] = {
+            ...next[idx],
+            content,
+            status,
+            error,
+            updatedAt: now,
+            completedAt: now,
+          };
+          return next;
+        }
+        // The app channel may already have delivered the real final message.
+        const last = prev[prev.length - 1];
+        if (
+          last &&
+          last.role === 'assistant' &&
+          TERMINAL_STATUSES.has(last.status) &&
+          last.content === content
+        ) {
+          return prev;
+        }
+        return [
+          ...prev,
+          {
+            _id: finalId,
+            threadId: threadId ?? '',
+            role: 'assistant',
+            content,
+            status,
+            error,
+            createdAt: now,
+            updatedAt: now,
+            completedAt: now,
+          },
+        ];
+      });
+
+      // Background reconcile: real ids + the generated thread title
+      // (the chat.thread.updated event usually beats this).
+      if (threadId) void loadMessages(threadId, { background: true });
+      void refetchThreads();
+    },
+    [loadMessages, refetchThreads],
+  );
+
+  // Both token-SSE attempts died without a terminal event: re-fetch the
+  // active generation and reopen with a fresh snapshot, or clean up.
+  const onStreamDead = useCallback(() => {
+    const current = streamingRef.current;
+    const threadId = selectedThreadIdRef.current;
+    if (!current || !threadId) return;
+    void (async () => {
+      try {
+        const { generation } = await getActiveGeneration(threadId);
+        if (streamingRef.current?.generationId !== current.generationId) return;
+        if (generation && ACTIVE_STATUSES.has(generation.status)) {
+          setCancelRequested(Boolean(generation.cancelRequested));
+          await sleep(SSE_REOPEN_DELAY_MS);
+          if (streamingRef.current?.generationId === current.generationId) {
+            setSseAttempt((n) => n + 1);
+          }
+        } else {
+          setStreaming(null);
+          setCancelRequested(false);
+          void loadMessages(threadId, { background: true });
+        }
+      } catch (err) {
+        console.error('[Chat] active-generation recheck failed:', err);
+      }
+    })();
+  }, [loadMessages]);
+
+  useSSEStream(
+    streaming?.generationId ?? null,
+    sseAttempt,
+    onSnapshot,
+    onDelta,
+    onToolCall,
+    onTerminal,
+    onStreamDead,
+  );
+
+  // ── App-channel events ──────────────────────────────────────────────────────
+
+  // Cross-tab message visibility + completion handoff for tabs whose token
+  // SSE has not delivered terminal yet. Upserts by _id: the final assistant
+  // message shares its id with the queued placeholder already in the list.
+  useAppEvents('chat.message.created', (event) => {
+    if (event.type === '$reconnected') return;
+    const message = event.data.message as ChatMessage | undefined;
+    const threadId =
+      typeof event.data.threadId === 'string' ? event.data.threadId : message?.threadId;
+    if (!message || typeof message._id !== 'string' || !threadId) return;
+    if (threadId !== selectedThreadIdRef.current) return;
+
+    const isTerminalAssistant =
+      message.role === 'assistant' && TERMINAL_STATUSES.has(message.status);
+
+    setMessages((prev) => {
+      if (!prev) return prev;
+      const idx = prev.findIndex((m) => m._id === message._id);
+      let next: ChatMessage[];
+      if (idx >= 0) {
+        next = [...prev];
+        next[idx] = message;
+      } else {
+        next = [...prev, message];
+      }
+      // The real final message supersedes any locally-materialized one.
+      if (isTerminalAssistant) {
+        next = next.filter((m) => !m._id.startsWith('gen-'));
+      }
+      return next;
+    });
+
+    if (isTerminalAssistant) {
+      const current = streamingRef.current;
+      if (
+        current &&
+        (current.assistantMessageId === undefined ||
+          current.assistantMessageId === message._id)
+      ) {
+        setStreaming(null);
+        setCancelRequested(false);
+      }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeGeneration]);
+  });
+
+  // Resume-in-other-tab + cross-tab cancel-state sync.
+  useAppEvents('chat.generation.updated', (event) => {
+    if (event.type === '$reconnected') return;
+    const generation = event.data.generation as ChatGeneration | undefined;
+    const threadId =
+      typeof event.data.threadId === 'string' ? event.data.threadId : generation?.threadId;
+    if (!generation || typeof generation._id !== 'string' || !threadId) return;
+    if (threadId !== selectedThreadIdRef.current) return;
+
+    const current = streamingRef.current;
+
+    if (ACTIVE_STATUSES.has(generation.status)) {
+      if (!current) {
+        // Started in another tab — resume; the SSE snapshot fills the content.
+        setStreaming({
+          content: '',
+          status: generation.status,
+          activity: generation.activity ?? null,
+          generationId: generation._id,
+          toolCalls: [],
+        });
+        setCancelRequested(Boolean(generation.cancelRequested));
+      } else if (current.generationId === generation._id) {
+        setCancelRequested(Boolean(generation.cancelRequested));
+      }
+      return;
+    }
+
+    // Terminal while this tab still shows streaming: the token SSE terminal /
+    // chat.message.created normally complete the handoff (keeping the text);
+    // only force-clear if neither has arrived after a grace period.
+    if (current && current.generationId === generation._id) {
+      window.setTimeout(() => {
+        if (streamingRef.current?.generationId !== generation._id) return;
+        setStreaming(null);
+        setCancelRequested(false);
+        if (selectedThreadIdRef.current === threadId) {
+          void loadMessages(threadId, { background: true });
+        }
+      }, TERMINAL_EVENT_GRACE_MS);
+    }
+  });
+
+  // ── Thread selection / hash routing ────────────────────────────────────────
 
   useEffect(() => {
     if (normalizePathname(window.location.pathname) === '/chat') {
       const hash = window.location.hash.slice(1);
-      if (hash) setSelectedThreadId(hash as Id<'chatThreads'>);
+      if (hash) setSelectedThreadId(hash);
     }
 
     setHashInitialized(true);
@@ -711,48 +979,144 @@ export default function ChatPage() {
     window.history.replaceState(null, '', getChatUrl(selectedThreadId));
   }, [hashInitialized, isChatRoute, selectedThreadId]);
 
+  // Load messages + resume any active generation on thread select.
+  useEffect(() => {
+    if (!hashInitialized) return;
+    if (!selectedThreadId) {
+      setMessages(undefined);
+      return;
+    }
+
+    const threadId = selectedThreadId;
+    const fromSend = sentThreadRef.current === threadId;
+    sentThreadRef.current = null;
+
+    void loadMessages(threadId, { background: fromSend });
+
+    // A send from this tab already holds the streaming state; only probe for
+    // an in-flight generation when arriving at the thread some other way.
+    if (fromSend) return;
+    void (async () => {
+      try {
+        const { generation } = await getActiveGeneration(threadId);
+        if (selectedThreadIdRef.current !== threadId || streamingRef.current) return;
+        if (generation && ACTIVE_STATUSES.has(generation.status)) {
+          setStreaming({
+            content: '',
+            status: generation.status,
+            activity: generation.activity ?? null,
+            generationId: generation._id,
+            toolCalls: [],
+          });
+          setCancelRequested(Boolean(generation.cancelRequested));
+        }
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 403) {
+          setForceNotEntitled(true);
+        } else {
+          console.error('[Chat] active-generation fetch failed:', err);
+        }
+      }
+    })();
+  }, [hashInitialized, selectedThreadId, loadMessages]);
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, streaming?.content]);
 
+  // ── Actions ─────────────────────────────────────────────────────────────────
+
   const handleSend = async () => {
     const content = inputValue.trim();
-    if (!content || isSending) return;
+    if (!content || isSending || streaming) return;
 
     setIsSending(true);
     setInputValue('');
 
+    const tempId = `temp-${crypto.randomUUID()}`;
+    const now = Date.now();
+    const optimistic: ChatMessage = {
+      _id: tempId,
+      threadId: selectedThreadId ?? '',
+      role: 'user',
+      content,
+      status: 'completed',
+      error: null,
+      createdAt: now,
+      updatedAt: now,
+      completedAt: now,
+    };
+    setMessages((prev) => (prev ? [...prev, optimistic] : [optimistic]));
+
     try {
-      const clientRequestId = crypto.randomUUID();
-      const result = await sendMessageMutation({
+      const result = await sendChatMessage({
         threadId: selectedThreadId ?? undefined,
-        clientRequestId,
+        clientRequestId: crypto.randomUUID(),
         content,
       });
 
+      // Swap the optimistic id for the real one (the chat.message.created
+      // event may have landed the real message already — then just drop temp).
+      setMessages((prev) => {
+        if (!prev) return prev;
+        if (prev.some((m) => m._id === result.userMessageId)) {
+          return prev.filter((m) => m._id !== tempId);
+        }
+        return prev.map((m) =>
+          m._id === tempId ? { ...m, _id: result.userMessageId, threadId: result.threadId } : m,
+        );
+      });
+
+      if (result.threadId !== selectedThreadId) {
+        sentThreadRef.current = result.threadId;
+      }
       setSelectedThreadId(result.threadId);
+      setCancelRequested(false);
       setStreaming({
         content: '',
         status: 'queued',
         activity: null,
         generationId: result.generationId,
+        assistantMessageId: result.assistantMessageId,
         toolCalls: [],
       });
     } catch (err) {
-      console.error('[Chat] sendMessage failed:', err);
+      setMessages((prev) => (prev ? prev.filter((m) => m._id !== tempId) : prev));
+      setInputValue((prevInput) => prevInput || content);
+      if (err instanceof ApiError && err.status === 403) {
+        setForceNotEntitled(true);
+      } else {
+        console.error('[Chat] sendMessage failed:', err);
+      }
     } finally {
       setIsSending(false);
     }
   };
 
-  const handleSelectThread = (id: Id<'chatThreads'>) => {
+  const handleCancel = async () => {
+    const current = streaming;
+    if (!current || cancelRequested) return;
+    setCancelRequested(true);
+    try {
+      await cancelGeneration(current.generationId);
+    } catch (err) {
+      console.error('[Chat] cancel failed:', err);
+      if (streamingRef.current?.generationId === current.generationId) {
+        setCancelRequested(false);
+      }
+    }
+  };
+
+  const handleSelectThread = (id: string) => {
     setSelectedThreadId(id);
     setStreaming(null);
+    setCancelRequested(false);
   };
 
   const handleNewChat = () => {
     setSelectedThreadId(null);
     setStreaming(null);
+    setCancelRequested(false);
     setInputValue('');
   };
 
@@ -762,11 +1126,10 @@ export default function ChatPage() {
   });
 
   const isGenerating = !!streaming;
-  const canCancel =
-    streaming && activeGeneration && !activeGeneration.cancelRequested;
+  const canCancel = !!streaming && !cancelRequested;
 
   const hasContent = selectedThreadId || streaming;
-  const notEntitled = threads === null;
+  const notEntitled = threadsError?.status === 403 || forceNotEntitled;
 
   if (notEntitled) {
     return (
@@ -819,9 +1182,7 @@ export default function ChatPage() {
       {canCancel && (
         <div className="fixed bottom-[200px] left-1/2 -translate-x-1/2 z-30">
           <button
-            onClick={() =>
-              requestCancelMutation({ generationId: streaming.generationId })
-            }
+            onClick={handleCancel}
             className="px-3 py-1.5 rounded-full bg-white border border-zinc-300 text-xs text-zinc-600 hover:text-red-500 hover:border-red-300 shadow-sm transition-colors"
           >
             Stop generating

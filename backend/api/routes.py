@@ -3,12 +3,11 @@ General API routes
 """
 import json
 import time
-from hashlib import sha256
 
 from flask import Blueprint, Response, jsonify, request, stream_with_context
 from config import Config
 from auth.middleware import auth_required
-from onboarding import get_user as convex_get_user, update_onboarding_step, save_consent
+from db import app_users
 from services.chat import live_stream
 
 TERMINAL_CHAT_STATUSES = {"completed", "failed", "cancelled"}
@@ -25,59 +24,11 @@ def health():
 @api_bp.route("/user")
 @auth_required
 def get_current_user(user):
-    """Get current authenticated user with onboarding state"""
-    # Get onboarding state from Convex
-    onboarding_step = "welcome"
-    schoology_connected = False
-
-    try:
-        convex_user = convex_get_user(Config.CONVEX_URL, str(user["id"]))
-        if convex_user:
-            onboarding_step = convex_user.get("onboardingStep", "welcome")
-            schoology_connected = convex_user.get("schoologyConnected", False)
-    except Exception as e:
-        print(f"[WARNING] Failed to get Convex user: {e}")
-
-    return jsonify({
-        "user_id": user["id"],
-        "email": user["email"],
-        "name": user["name"],
-        "created_at": user["created_at"],
-        "last_login": user["last_login"],
-        "onboarding_step": onboarding_step,
-        "schoology_connected": schoology_connected
-    })
-
-
-@api_bp.route("/convex-token")
-@auth_required
-def get_convex_token(user):
-    """Get a JWT token for Convex authentication"""
-    from auth.jwt_utils import create_convex_token
-    token = create_convex_token(user["id"], user["email"], user["name"])
-    return jsonify({"token": token})
-
-
-@api_bp.route("/.well-known/jwks.json")
-def get_jwks():
-    """
-    Get the JSON Web Key Set for JWT verification.
-    This endpoint is public and used by Convex to verify JWT signatures.
-    """
-    from auth.jwt_utils import get_jwks
-
-    jwks = get_jwks()
-    payload = json.dumps(jwks, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    etag = sha256(payload).hexdigest()
-
-    if request.if_none_match.contains(etag):
-        response = api_bp.make_response(("", 304))
-    else:
-        response = jsonify(jwks)
-
-    response.headers["Cache-Control"] = "public, max-age=3600, stale-while-revalidate=86400"
-    response.headers["ETag"] = f"\"{etag}\""
-    return response
+    """Get current authenticated user with onboarding state (from SQLite)."""
+    api_user = app_users.get_api_user(user["id"])
+    if api_user is None:
+        return jsonify({"error": "user_not_found"}), 404
+    return jsonify(api_user)
 
 
 @api_bp.route("/user/onboarding/start", methods=["POST"])
@@ -88,12 +39,8 @@ def start_onboarding(user):
     Updates onboarding_step from "welcome" to "connect_lms".
     """
     try:
-        result = update_onboarding_step(
-            Config.CONVEX_URL,
-            str(user["id"]),
-            "connect_lms"
-        )
-        return jsonify({"success": True, "step": "connect_lms"})
+        api_user = app_users.update_onboarding_step(user["id"], "connect_lms")
+        return jsonify({"success": True, "step": "connect_lms", "user": api_user})
     except Exception as e:
         print(f"[ERROR] Failed to start onboarding: {e}")
         return jsonify({"error": str(e)}), 500
@@ -128,16 +75,13 @@ def save_user_consent(user):
             "version": str(version)
         }
 
-        result = save_consent(
-            Config.CONVEX_URL,
-            str(user["id"]),
-            consent
-        )
+        api_user = app_users.save_consent(user["id"], consent)
 
         return jsonify({
             "success": True,
             "step": "completed",
-            "consent": consent
+            "consent": consent,
+            "user": api_user,
         })
 
     except Exception as e:

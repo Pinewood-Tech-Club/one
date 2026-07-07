@@ -1,11 +1,12 @@
 """
 Schoology API routes.
 """
+import time
+
 from flask import Blueprint, jsonify, redirect, request
 from config import Config
 from auth.middleware import auth_required
 from services.schoology import start_oauth, complete_oauth
-from services.schoology.convex_sync import sync_profile_picture
 from services.schoology.refresh import start_schoology_refresh_for_user
 from services.schoology.runtime import create_schoology_service
 from db.tokens import (
@@ -16,7 +17,7 @@ from db.tokens import (
     delete_schoology_tokens
 )
 from db.encryption import decrypt_token
-from onboarding import update_schoology_connected, update_onboarding_step
+from db import app_users, schoology_cache_store
 from services.schoology import SchoologyService
 
 # Blueprint for /oauth/schoology/* routes
@@ -47,7 +48,6 @@ def schoology_developer_override(user):
             access_token_secret=None,
             consumer_key=client_id,
             consumer_secret=client_secret,
-            convex_url=Config.CONVEX_URL,
             schoology_domain=Config.SCHOOLOGY_DOMAIN,
             schoology_api_domain=Config.SCHOOLOGY_API_DOMAIN,
         )
@@ -57,18 +57,22 @@ def schoology_developer_override(user):
         save_schoology_credentials(user["id"], client_id, client_secret)
 
         try:
-            update_schoology_connected(Config.CONVEX_URL, str(user["id"]), True)
-            update_onboarding_step(Config.CONVEX_URL, str(user["id"]), "smart_consent")
+            app_users.set_schoology_connected(user["id"], True)
+            app_users.update_onboarding_step(user["id"], "smart_consent")
         except Exception as e:
-            print(f"[WARNING] Failed to update Convex onboarding state: {e}")
+            print(f"[WARNING] Failed to update onboarding state: {e}")
 
         try:
             if schoology_user.get("picture_url"):
-                sync_profile_picture(Config.CONVEX_URL, str(user["id"]), schoology_user["picture_url"])
+                app_users.set_profile_picture_url(user["id"], schoology_user["picture_url"])
         except Exception as e:
             print(f"[WARNING] Failed to sync profile picture: {e}")
 
-        return jsonify({"success": True, "schoology_user": schoology_user})
+        return jsonify({
+            "success": True,
+            "schoology_user": schoology_user,
+            "user": app_users.get_api_user(user["id"]),
+        })
 
     except Exception as e:
         print(f"[ERROR] Schoology developer override error: {e}")
@@ -154,12 +158,12 @@ def schoology_oauth_callback():
 
         print(f"✅ Schoology OAuth successful for user_id: {user_id}")
 
-        # Update Convex: mark Schoology as connected and advance onboarding
+        # Mark Schoology as connected and advance onboarding
         try:
-            update_schoology_connected(Config.CONVEX_URL, str(user_id), True)
-            update_onboarding_step(Config.CONVEX_URL, str(user_id), "smart_consent")
+            app_users.set_schoology_connected(int(user_id), True)
+            app_users.update_onboarding_step(int(user_id), "smart_consent")
         except Exception as e:
-            print(f"[WARNING] Failed to update Convex onboarding state: {e}")
+            print(f"[WARNING] Failed to update onboarding state: {e}")
 
         # Fetch and cache profile picture
         try:
@@ -167,7 +171,7 @@ def schoology_oauth_callback():
             if service:
                 schoology_user = service.get_user_info()
                 if schoology_user.get("picture_url"):
-                    sync_profile_picture(Config.CONVEX_URL, str(user_id), schoology_user["picture_url"])
+                    app_users.set_profile_picture_url(int(user_id), schoology_user["picture_url"])
         except Exception as e:
             print(f"[WARNING] Failed to sync profile picture: {e}")
 
@@ -223,7 +227,7 @@ def schoology_courses(user):
             return jsonify({"error": "Schoology account not connected"}), 400
 
         print(f"[DEBUG] Fetching courses from Schoology API...")
-        courses = service.get_courses()  # Automatically syncs to Convex
+        courses = service.get_courses()  # Also refreshes the local cache
         print(f"[DEBUG] Retrieved {len(courses)} courses")
 
         return jsonify({"courses": courses})
@@ -238,21 +242,10 @@ def schoology_courses(user):
 @schoology_api_bp.route("/upcoming")
 @auth_required
 def schoology_upcoming(user):
-    """Get upcoming assignments within the next N days"""
+    """Get upcoming (future-due) assignments from the local cache."""
     try:
-        print(f"[DEBUG] /api/schoology/upcoming called for user_id: {user['id']}")
-
-        service = create_schoology_service(user["id"])
-        if not service:
-            print(f"[DEBUG] Failed to create Schoology service for user_id: {user['id']}")
-            return jsonify({"error": "Schoology account not connected"}), 400
-
-        days = request.args.get("days", 7, type=int)
-        print(f"[DEBUG] Fetching upcoming assignments for next {days} days...")
-
-        assignments = service.get_upcoming_assignments(days=days)
-        print(f"[DEBUG] Retrieved {len(assignments)} upcoming assignments")
-
+        now_ms = int(time.time() * 1000)
+        assignments = schoology_cache_store.get_upcoming(user["id"], now_ms)
         return jsonify({"assignments": assignments})
 
     except Exception as e:
@@ -265,7 +258,7 @@ def schoology_upcoming(user):
 @schoology_api_bp.route("/refresh", methods=["POST"])
 @auth_required
 def schoology_refresh(user):
-    """Refresh all Schoology data and update Convex cache."""
+    """Refresh all Schoology data and update the local cache."""
     payload, status_code = start_schoology_refresh_for_user(user["id"])
     return jsonify(payload), status_code
 
@@ -277,16 +270,16 @@ def schoology_disconnect(user):
         # Create service to clear cache
         service = create_schoology_service(user["id"])
         if service:
-            service.disconnect()  # Clear Convex cache
+            service.disconnect()  # Clear the local cache
 
         # Delete tokens
         delete_schoology_tokens(user["id"])
 
-        # Update Convex: mark Schoology as disconnected
+        # Mark Schoology as disconnected
         try:
-            update_schoology_connected(Config.CONVEX_URL, str(user["id"]), False)
+            app_users.set_schoology_connected(user["id"], False)
         except Exception as e:
-            print(f"[WARNING] Failed to update Convex: {e}")
+            print(f"[WARNING] Failed to update connection state: {e}")
 
         return jsonify({"message": "Schoology account disconnected successfully"})
 

@@ -1,10 +1,10 @@
 'use client';
 
 import { useState } from 'react';
-import { useQuery } from 'convex/react';
-import { api } from '../../../../convex/_generated/api';
 import { useTimeBasedGreeting } from '@/hooks/useTimeBasedGreeting';
 import { useUser } from '@/context/UserContext';
+import { useLiveQuery } from '@/hooks/useLiveQuery';
+import { getUpcoming, type UpcomingAssignment } from '@/lib/api';
 import Image from 'next/image';
 import { UpcomingAssignmentsCarosuel } from '@/components/upcoming/UpcomingAssignmentsCarosuel';
 import { IconWrapper } from '@/components/icons/IconWrapper';
@@ -14,7 +14,13 @@ export default function UpcomingPage() {
   const { userName } = useUser();
   const greeting = useTimeBasedGreeting(userName || 'there');
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const upcomingAssignments = useQuery(api.schoologyCache.getUpcoming);
+  // Owns the upcoming query; the carousel receives assignments as a prop.
+  // schoology.updated fires once per course on a full refresh, so the hook's
+  // built-in 500ms trailing-edge debounce coalesces the burst into one refetch.
+  const { data: upcomingAssignments } = useLiveQuery<UpcomingAssignment[]>({
+    fetcher: () => getUpcoming().then((r) => r.assignments),
+    events: [{ type: 'schoology.updated' }],
+  });
 
   const handleRefresh = async () => {
     if (isRefreshing) return;
@@ -69,7 +75,7 @@ export default function UpcomingPage() {
               </button>
             </div>
           </div>
-          <UpcomingAssignmentsCarosuel />
+          <UpcomingAssignmentsCarosuel assignments={upcomingAssignments} />
         </div>
       )}
     </div>

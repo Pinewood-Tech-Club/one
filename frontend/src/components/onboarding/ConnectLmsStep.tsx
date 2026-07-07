@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { OnboardingSlide } from './OnboardingSlide';
 import { mobileBridge } from '@/lib/mobileBridge';
+import { ApiError, postDeveloperOverride, type ApiUser } from '@/lib/api';
 
 const BACKGROUND_COLOR = '#2563eb';
 
@@ -11,9 +12,10 @@ type OnboardingMode = 'web' | 'mobile';
 
 interface ConnectLmsStepProps {
   mode?: OnboardingMode;
+  onUserUpdate: (user: ApiUser) => void;
 }
 
-export function ConnectLmsStep({ mode = 'web' }: ConnectLmsStepProps) {
+export function ConnectLmsStep({ mode = 'web', onUserUpdate }: ConnectLmsStepProps) {
   const searchParams = useSearchParams();
   const error = searchParams.get('error');
   const allowDeveloperOverride = mode !== 'mobile' && process.env.NODE_ENV !== 'production';
@@ -23,11 +25,12 @@ export function ConnectLmsStep({ mode = 'web' }: ConnectLmsStepProps) {
   const [overrideClientSecret, setOverrideClientSecret] = useState('');
   const [overrideSubmitting, setOverrideSubmitting] = useState(false);
   const [overrideError, setOverrideError] = useState<string | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
+  const mountedRef = useRef(true);
 
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
-      abortRef.current?.abort();
+      mountedRef.current = false;
     };
   }, []);
 
@@ -55,44 +58,23 @@ export function ConnectLmsStep({ mode = 'web' }: ConnectLmsStepProps) {
     setOverrideSubmitting(true);
     setOverrideError(null);
     try {
-      abortRef.current?.abort();
-      abortRef.current = new AbortController();
-
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_BACKEND_URL}/api/schoology/developer-override`,
-        {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          signal: abortRef.current.signal,
-          body: JSON.stringify({
-            clientId: overrideClientId,
-            clientSecret: overrideClientSecret,
-          }),
-        }
-      );
-
-      if (!res.ok) {
-        let message = 'Something went wrong. Please try again.';
-        try {
-          const data = (await res.json()) as { error?: string };
-          if (data?.error) message = data.error;
-        } catch {}
-        setOverrideError(message);
-        setOverrideSubmitting(false);
-        return;
-      }
-
+      const data = await postDeveloperOverride({
+        clientId: overrideClientId,
+        clientSecret: overrideClientSecret,
+      });
+      if (!mountedRef.current) return;
+      // Advance instantly from the response; the user.updated event also fires.
+      onUserUpdate(data.user);
       setOverrideOpen(false);
       setOverrideClientId('');
       setOverrideClientSecret('');
     } catch (e) {
-      if (e instanceof DOMException && e.name === 'AbortError') {
-        return;
-      }
-      setOverrideError('Something went wrong. Please try again.');
+      if (!mountedRef.current) return;
+      const message =
+        e instanceof ApiError && e.code ? e.code : 'Something went wrong. Please try again.';
+      setOverrideError(message);
     } finally {
-      setOverrideSubmitting(false);
+      if (mountedRef.current) setOverrideSubmitting(false);
     }
   };
 

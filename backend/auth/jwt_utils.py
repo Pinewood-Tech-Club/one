@@ -2,7 +2,6 @@
 JWT utilities for backend-issued RS256 tokens.
 """
 import os
-import base64
 import secrets
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -18,9 +17,7 @@ from config import Config
 JWT_ALGORITHM = "RS256"
 JWT_ISSUER = os.environ.get("JWT_ISSUER", Config.BACKEND_URL)
 JWT_KEY_ID = "pinewood-one-key-1"
-JWT_CONVEX_AUDIENCE = "convex"
 JWT_MOBILE_AUDIENCE = "mobile_api"
-JWT_DEFAULT_CONVEX_EXPIRATION_HOURS = 24
 JWT_PRIVATE_KEY_PEM = os.environ.get("JWT_PRIVATE_KEY_PEM")
 JWT_PUBLIC_KEY_PEM = os.environ.get("JWT_PUBLIC_KEY_PEM")
 
@@ -88,30 +85,6 @@ def _load_public_key():
     return serialization.load_pem_public_key(public_bytes)
 
 
-def _int_to_base64url(n: int) -> str:
-    byte_length = (n.bit_length() + 7) // 8
-    return base64.urlsafe_b64encode(n.to_bytes(byte_length, "big")).rstrip(b"=").decode("ascii")
-
-
-def get_jwks() -> dict:
-    """Get JSON Web Key Set for public key verification."""
-    public_key = _load_public_key()
-    public_numbers = public_key.public_numbers()
-
-    return {
-        "keys": [
-            {
-                "kty": "RSA",
-                "use": "sig",
-                "alg": JWT_ALGORITHM,
-                "kid": JWT_KEY_ID,
-                "n": _int_to_base64url(public_numbers.n),
-                "e": _int_to_base64url(public_numbers.e),
-            }
-        ]
-    }
-
-
 def create_token(
     user_id: int,
     email: str,
@@ -124,10 +97,7 @@ def create_token(
     private_key = _load_private_key()
 
     if expires_in_seconds is None:
-        if audience == JWT_CONVEX_AUDIENCE:
-            expires_in_seconds = JWT_DEFAULT_CONVEX_EXPIRATION_HOURS * 3600
-        else:
-            expires_in_seconds = Config.MOBILE_ACCESS_TOKEN_TTL_SECONDS
+        expires_in_seconds = Config.MOBILE_ACCESS_TOKEN_TTL_SECONDS
 
     now = datetime.now(timezone.utc)
     payload = {
@@ -150,22 +120,6 @@ def create_token(
     }
 
     return jwt.encode(payload, private_key, algorithm=JWT_ALGORITHM, headers=headers)
-
-
-def create_convex_token(
-    user_id: int,
-    email: str,
-    name: str,
-    expires_in_seconds: int | None = None,
-) -> str:
-    """Backwards-compatible helper for Convex JWT creation."""
-    return create_token(
-        user_id=user_id,
-        email=email,
-        name=name,
-        audience=JWT_CONVEX_AUDIENCE,
-        expires_in_seconds=expires_in_seconds,
-    )
 
 
 def create_mobile_access_token(
@@ -204,11 +158,6 @@ def verify_token(token: str, audience: str) -> dict | None:
         return None
     except jwt.InvalidTokenError:
         return None
-
-
-def verify_convex_token(token: str) -> dict | None:
-    """Backwards-compatible helper for Convex JWT verification."""
-    return verify_token(token, audience=JWT_CONVEX_AUDIENCE)
 
 
 def verify_mobile_access_token(token: str) -> dict | None:
