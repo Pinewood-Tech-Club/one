@@ -557,6 +557,7 @@ export default function ChatPage() {
   const [hashInitialized, setHashInitialized] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const [isSending, setIsSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
   const [streaming, setStreaming] = useState<StreamingState>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -570,6 +571,16 @@ export default function ChatPage() {
   const activeGeneration = useQuery(
     api.chat.getActiveGeneration,
     authReady && selectedThreadId ? { threadId: selectedThreadId } : 'skip',
+  );
+  // Persisted tool-call rows for the in-flight generation. The SSE stream only
+  // replays tool_call events going forward, so on a reconnect (e.g. remount)
+  // any already-emitted tool calls are missing from local state. Query the
+  // durable source so a reconnect can rehydrate them.
+  const persistedToolCalls = useQuery(
+    api.chat.listToolCalls,
+    authReady && streaming?.generationId
+      ? { generationId: streaming.generationId }
+      : 'skip',
   );
 
   const sendMessageMutation = useMutation(api.chat.sendMessage);
@@ -696,6 +707,39 @@ export default function ChatPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeGeneration]);
 
+  // Rehydrate tool-call state from the persisted rows. Live SSE updates win for
+  // any call we already know about; persisted rows fill in calls that local
+  // state is missing (the reconnect case where earlier tool_call events were
+  // never replayed).
+  useEffect(() => {
+    if (!persistedToolCalls || persistedToolCalls.length === 0) return;
+    setStreaming((prev) => {
+      if (!prev) return prev;
+
+      const byCallId = new Map(prev.toolCalls.map((toolCall) => [toolCall.callId, toolCall]));
+      let changed = false;
+      for (const persisted of persistedToolCalls) {
+        if (byCallId.has(persisted.callId)) continue;
+        byCallId.set(persisted.callId, {
+          sequence: persisted.sequence,
+          callId: persisted.callId,
+          toolName: persisted.toolName,
+          status: persisted.status,
+          argumentsText: persisted.argumentsText,
+          summaryText: persisted.summaryText,
+          errorText: persisted.errorText,
+        });
+        changed = true;
+      }
+      if (!changed) return prev;
+
+      const mergedToolCalls = Array.from(byCallId.values()).sort(
+        (a, b) => a.sequence - b.sequence,
+      );
+      return { ...prev, toolCalls: mergedToolCalls };
+    });
+  }, [persistedToolCalls]);
+
   useEffect(() => {
     if (normalizePathname(window.location.pathname) === '/chat') {
       const hash = window.location.hash.slice(1);
@@ -720,7 +764,7 @@ export default function ChatPage() {
     if (!content || isSending) return;
 
     setIsSending(true);
-    setInputValue('');
+    setSendError(null);
 
     try {
       const clientRequestId = crypto.randomUUID();
@@ -730,6 +774,9 @@ export default function ChatPage() {
         content,
       });
 
+      // Only clear the input once the send has actually succeeded, so a
+      // rejected mutation never destroys what the user typed.
+      setInputValue('');
       setSelectedThreadId(result.threadId);
       setStreaming({
         content: '',
@@ -740,6 +787,9 @@ export default function ChatPage() {
       });
     } catch (err) {
       console.error('[Chat] sendMessage failed:', err);
+      // Preserve the typed text (it was never cleared) and surface the error
+      // so the message isn't silently lost.
+      setSendError("Couldn't send your message. Please try again.");
     } finally {
       setIsSending(false);
     }
@@ -766,7 +816,21 @@ export default function ChatPage() {
     streaming && activeGeneration && !activeGeneration.cancelRequested;
 
   const hasContent = selectedThreadId || streaming;
+  // `threads` is `undefined` while the query is still loading (or auth isn't
+  // ready yet) and `null` only when the user is genuinely not entitled. Keep
+  // those two cases distinct so a transient loading/auth blip never renders the
+  // terminal "not available" dead-end.
+  const chatLoading = !authReady || threads === undefined;
   const notEntitled = threads === null;
+
+  if (chatLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen gap-3 text-zinc-400">
+        <MessageCircleMore className="w-12 h-12 animate-pulse" strokeWidth={1.5} />
+        <p className="text-sm animate-pulse">Loading chat...</p>
+      </div>
+    );
+  }
 
   if (notEntitled) {
     return (
@@ -829,13 +893,24 @@ export default function ChatPage() {
         </div>
       )}
 
+      {sendError && (
+        <div className="fixed bottom-[200px] left-1/2 -translate-x-1/2 z-30">
+          <div className="px-3 py-1.5 rounded-full bg-white border border-red-300 text-xs text-red-500 shadow-sm">
+            {sendError}
+          </div>
+        </div>
+      )}
+
       <Composer
         threads={threads}
         selectedThreadId={selectedThreadId}
         onSelectThread={handleSelectThread}
         onNewChat={handleNewChat}
         inputValue={inputValue}
-        setInputValue={setInputValue}
+        setInputValue={(v) => {
+          if (sendError) setSendError(null);
+          setInputValue(v);
+        }}
         onSend={handleSend}
         disabled={isSending || isGenerating}
       />
