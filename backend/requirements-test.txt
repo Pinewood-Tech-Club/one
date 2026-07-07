@@ -6,3 +6,7 @@ pytest>=8.0
 cryptography>=42.0
 PyJWT>=2.8
 python-dotenv>=1.0
+
+# Mutation testing. mutmut 3.x is pytest-native and reads its config from the
+# [tool.mutmut] section of pyproject.toml. See tests/README.md.
+mutmut>=3.6
