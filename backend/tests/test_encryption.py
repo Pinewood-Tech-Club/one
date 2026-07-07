@@ -5,7 +5,7 @@ request-token lookup helper in db/init.py.
 import pytest
 from cryptography.fernet import Fernet, InvalidToken
 
-from db.encryption import ENCRYPTION_KEY_BYTES, encrypt_token, decrypt_token
+from db.encryption import encrypt_token, decrypt_token
 from db.init import hash_schoology_request_token
 
 
@@ -65,9 +65,15 @@ class TestDecryptFailureModes:
             other.decrypt(ciphertext.encode())
 
     def test_module_key_matches_configured_key(self):
-        # The module must use exactly the configured ENCRYPTION_KEY.
+        # The module must use exactly the configured ENCRYPTION_KEY. Assert
+        # against the env var directly (not the module's own re-exported
+        # constant) so this fails if the module ever derives its key from a
+        # different source while staying internally consistent.
+        import os
+
+        configured = Fernet(os.environ["ENCRYPTION_KEY"].encode())
         ciphertext = encrypt_token("key-binding-check")
-        assert Fernet(ENCRYPTION_KEY_BYTES).decrypt(ciphertext.encode()) == b"key-binding-check"
+        assert configured.decrypt(ciphertext.encode()) == b"key-binding-check"
 
 
 class TestHashedRequestTokenLookup:

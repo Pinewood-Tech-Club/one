@@ -22,34 +22,53 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 # --- Hermetic environment: MUST run before importing any app module -------
+#
+# Everything here must be IDEMPOTENT (setdefault, not assignment): pytest
+# imports this file as module `conftest`, and `from tests.conftest import ...`
+# in a test module executes it a second time under the name `tests.conftest`.
+# Unconditional assignments would regenerate the secrets on that second pass,
+# silently desyncing os.environ from the app modules that already imported
+# the first-pass values.
 
+# Forced (not setdefault): a stray FLASK_ENV=production in the invoking shell
+# would make _load_secret raise. Assigning a constant is naturally idempotent.
 os.environ["FLASK_ENV"] = "development"
-os.environ["ENCRYPTION_KEY"] = Fernet.generate_key().decode("utf-8")
-os.environ["FLASK_SECRET_KEY"] = secrets.token_urlsafe(48)
-os.environ["MOBILE_TOKEN_HASH_SECRET"] = secrets.token_urlsafe(48)
+os.environ.setdefault("ENCRYPTION_KEY", Fernet.generate_key().decode("utf-8"))
+os.environ.setdefault("FLASK_SECRET_KEY", secrets.token_urlsafe(48))
+os.environ.setdefault("MOBILE_TOKEN_HASH_SECRET", secrets.token_urlsafe(48))
 
-_private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-TEST_PRIVATE_KEY_PEM = _private_key.private_bytes(
-    encoding=serialization.Encoding.PEM,
-    format=serialization.PrivateFormat.PKCS8,
-    encryption_algorithm=serialization.NoEncryption(),
-).decode("ascii")
-TEST_PUBLIC_KEY_PEM = _private_key.public_key().public_bytes(
-    encoding=serialization.Encoding.PEM,
-    format=serialization.PublicFormat.SubjectPublicKeyInfo,
-).decode("ascii")
+if "JWT_PRIVATE_KEY_PEM" not in os.environ:
+    _private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    os.environ["JWT_PRIVATE_KEY_PEM"] = _private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode("ascii")
+    os.environ["JWT_PUBLIC_KEY_PEM"] = _private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode("ascii")
 
-os.environ["JWT_PRIVATE_KEY_PEM"] = TEST_PRIVATE_KEY_PEM
-os.environ["JWT_PUBLIC_KEY_PEM"] = TEST_PUBLIC_KEY_PEM
+TEST_PRIVATE_KEY_PEM = os.environ["JWT_PRIVATE_KEY_PEM"]
+TEST_PUBLIC_KEY_PEM = os.environ["JWT_PUBLIC_KEY_PEM"]
 
 # Point default DB paths somewhere harmless; individual tests override these
 # with tmp_path-scoped files via the fixtures below.
 os.environ.setdefault("SCRAPER_DB_PATH", "/nonexistent/should-be-overridden.db")
+os.environ.setdefault("MAIN_DB_PATH", "/nonexistent/should-be-overridden.db")
+os.environ.setdefault("SESSIONS_DB_PATH", "/nonexistent/should-be-overridden.db")
 
 import pytest  # noqa: E402
 
 from config import Config  # noqa: E402
 from db.init import init_main_db, init_scraper_db  # noqa: E402
+
+# Config currently hardcodes cwd-relative defaults for these two (the env vars
+# above only take effect once config.py reads them), so also stomp the class
+# attributes: a test that forgets the main_db fixture must fail loudly instead
+# of silently writing a real main.db into the working directory.
+Config.MAIN_DB_PATH = os.environ["MAIN_DB_PATH"]
+Config.SESSIONS_DB_PATH = os.environ["SESSIONS_DB_PATH"]
 
 
 @pytest.fixture()
