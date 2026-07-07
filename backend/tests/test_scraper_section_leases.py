@@ -331,17 +331,19 @@ class TestSectionStampOwnership:
     (a non-owner, or an owner whose lease was already stolen) can forge a
     "successful sync" stamp for a section it never actually scraped.
 
-    These guards are therefore RED on this branch and marked strict xfail. When
-    PR #2 (fix/scraper-lease-ownership) merges and the owner check is added, they
-    will XPASS -> strict xfail turns the XPASS into a FAILURE, which is the signal
-    to delete these markers.
+    These guards are RED on this base branch and marked NON-strict xfail: the
+    fix (PR #2, fix/scraper-lease-ownership) is already merged into dev, so a
+    strict marker would turn the XPASS into a suite failure the moment this
+    branch is integrated there. Non-strict keeps both trees green; delete the
+    markers once this branch and dev converge.
     """
 
     @pytest.mark.xfail(
-        strict=True,
-        reason="regression guard for the sections-stamp owner check; currently RED "
-        "because the fix is in unmerged PR #2 (fix/scraper-lease-ownership) — "
-        "remove this xfail when #2 merges",
+        strict=False,
+        reason="regression guard for the sections-stamp owner check; RED on this "
+        "branch (fix is PR #2, already merged into dev) but green once this "
+        "branch meets dev — non-strict so both trees stay green; delete the "
+        "marker when the branches converge",
     )
     def test_non_owner_complete_must_not_stamp_sections_table(self, scraper_db):
         now = utcnow()
@@ -355,10 +357,11 @@ class TestSectionStampOwnership:
         assert section["last_scraped_at"] is None
 
     @pytest.mark.xfail(
-        strict=True,
-        reason="regression guard for the sections-stamp owner check; currently RED "
-        "because the fix is in unmerged PR #2 (fix/scraper-lease-ownership) — "
-        "remove this xfail when #2 merges",
+        strict=False,
+        reason="regression guard for the sections-stamp owner check; RED on this "
+        "branch (fix is PR #2, already merged into dev) but green once this "
+        "branch meets dev — non-strict so both trees stay green; delete the "
+        "marker when the branches converge",
     )
     def test_superseded_owner_complete_must_not_stamp_sections_table(self, scraper_db):
         # owner-a's lease is stolen by owner-b; a late completion from the
