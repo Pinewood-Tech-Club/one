@@ -7,6 +7,7 @@ import queue
 import threading
 import time
 from dataclasses import dataclass
+from typing import Any
 
 from config import Config
 

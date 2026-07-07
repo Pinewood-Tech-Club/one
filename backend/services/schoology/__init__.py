@@ -6,7 +6,7 @@ and synchronize data to Convex cache.
 """
 
 from .client import SchoologyService
-from .oauth import start_oauth, complete_oauth
+from .oauth import complete_oauth, start_oauth
 
 __version__ = "0.1.0"
 __all__ = ["SchoologyService", "start_oauth", "complete_oauth"]

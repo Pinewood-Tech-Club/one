@@ -2,11 +2,11 @@
 Internal chat execution routes.
 """
 import logging
-from pathlib import Path
 import subprocess
-import threading
 import sys
+import threading
 import time
+from pathlib import Path
 
 from flask import Blueprint, jsonify, request
 

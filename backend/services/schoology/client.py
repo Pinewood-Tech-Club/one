@@ -2,18 +2,19 @@
 Schoology API client wrapper
 """
 import json
-from pathlib import Path
-from xml.sax.saxutils import escape
-import schoolopy
-import requests
-import requests_oauthlib
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode, urljoin, urlparse
+from xml.sax.saxutils import escape
+
+import requests
+import requests_oauthlib
+import schoolopy
+
 from .convex_sync import (
-    sync_courses,
-    sync_course_assignments,
-    sync_profile_picture,
     clear_cache,
+    sync_course_assignments,
+    sync_courses,
+    sync_profile_picture,
 )
 
 

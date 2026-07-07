@@ -2,6 +2,7 @@
 User database operations
 """
 from datetime import datetime
+
 from config import Config
 from db.pool import get_conn
 

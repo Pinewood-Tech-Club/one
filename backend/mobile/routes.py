@@ -1,15 +1,15 @@
 """
 Mobile API routes (/api/mobile/v1/*).
 """
-from flask import Blueprint, jsonify, redirect, request, session, g
+from flask import Blueprint, g, jsonify, redirect, request, session
 from flask_limiter.util import get_remote_address
 
 from auth.mobile_middleware import mobile_auth_required
 from config import Config
 from db.sessions import create_session
 from extensions import limiter
-from services.mobile import service
 from onboarding import get_user as convex_get_user
+from services.mobile import service
 from services.schoology.refresh import start_schoology_refresh_for_user
 
 mobile_bp = Blueprint("mobile_api", __name__, url_prefix="/api/mobile/v1")

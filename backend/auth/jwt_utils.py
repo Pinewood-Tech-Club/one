@@ -1,8 +1,8 @@
 """
 JWT utilities for backend-issued RS256 tokens.
 """
-import os
 import base64
+import os
 import secrets
 from datetime import datetime, timedelta, timezone
 from pathlib import Path

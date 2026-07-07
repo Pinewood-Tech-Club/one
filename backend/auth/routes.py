@@ -5,11 +5,13 @@ import hmac
 import logging
 import secrets
 import threading
-from flask import Blueprint, redirect, request, session, jsonify
+
+from flask import Blueprint, jsonify, redirect, request, session
+
+from auth.google import exchange_code_for_token, get_google_auth_url, get_user_info
 from config import Config
-from auth.google import get_google_auth_url, exchange_code_for_token, get_user_info
-from db.users import get_or_create_user
 from db.sessions import create_session, delete_session
+from db.users import get_or_create_user
 from onboarding import get_or_create_user as convex_get_or_create_user
 
 logger = logging.getLogger(__name__)

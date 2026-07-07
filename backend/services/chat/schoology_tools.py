@@ -3,18 +3,18 @@ Schoology chat tool definitions and execution helpers.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
-from pathlib import Path
 import re
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from itsdangerous import BadSignature, URLSafeSerializer
 
 from config import Config
 from services.schoology.runtime import create_schoology_service
-from services.scraper.extraction import read_extracted_attachment_text
 from services.scraper import store as scraper_store
+from services.scraper.extraction import read_extracted_attachment_text
 
 
 class SchoologyToolError(RuntimeError):

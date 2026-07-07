@@ -5,9 +5,10 @@ import logging
 import os
 import queue
 import threading
+from urllib.parse import urlencode
 
 import requests
-from urllib.parse import urlencode
+
 from config import Config
 
 logger = logging.getLogger(__name__)
