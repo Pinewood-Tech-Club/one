@@ -84,6 +84,9 @@ def load_documents(zf: zipfile.ZipFile, table: str) -> list[dict]:
             line = raw.strip()
             if line:
                 docs.append(json.loads(line))
+    # rowid (insertion order) is the transcript/UI tie-break at equal created_at,
+    # so insert in true creation order rather than raw JSONL order.
+    docs.sort(key=lambda d: d.get("_creationTime") or d.get("createdAt") or 0)
     return docs
 
 

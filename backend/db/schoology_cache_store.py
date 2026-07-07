@@ -403,12 +403,13 @@ def get_upcoming(user_id: int, now_ms: int) -> list[dict]:
     course_ids = _active_course_ids(conn, user_id)
 
     course_map: dict[str, dict] = {}
-    for course_id in course_ids:
-        row = conn.execute(
-            "SELECT * FROM schoology_courses WHERE course_id = ?", (course_id,)
-        ).fetchone()
-        if row:
-            course_map[course_id] = _course_dict(row)
+    if course_ids:
+        placeholders = ",".join("?" * len(course_ids))
+        for row in conn.execute(
+            f"SELECT * FROM schoology_courses WHERE course_id IN ({placeholders})",
+            course_ids,
+        ).fetchall():
+            course_map[row["course_id"]] = _course_dict(row)
 
     state_map: dict[tuple[str, str], dict] = {}
     for row in conn.execute(
@@ -416,14 +417,23 @@ def get_upcoming(user_id: int, now_ms: int) -> list[dict]:
     ).fetchall():
         state_map[(row["course_id"], row["assignment_id"])] = _user_state_dict(row)
 
+    # Batch the assignments in a single query, then regroup by course so the
+    # pre-sort order (course_ids order, rowid within a course) is unchanged.
+    assignments_by_course: dict[str, list[dict]] = {}
+    if course_ids:
+        placeholders = ",".join("?" * len(course_ids))
+        for row in conn.execute(
+            f"SELECT * FROM schoology_assignments"
+            f" WHERE course_id IN ({placeholders}) AND due_at_ms >= ?",
+            (*course_ids, now_ms),
+        ).fetchall():
+            assignments_by_course.setdefault(row["course_id"], []).append(
+                _assignment_dict(row)
+            )
+
     upcoming: list[dict] = []
     for course_id in course_ids:
-        for row in conn.execute(
-            "SELECT * FROM schoology_assignments"
-            " WHERE course_id = ? AND due_at_ms >= ?",
-            (course_id, now_ms),
-        ).fetchall():
-            upcoming.append(_assignment_dict(row))
+        upcoming.extend(assignments_by_course.get(course_id, []))
 
     def effective_due(record: dict) -> int:
         due = record["dueAtMs"]
@@ -449,11 +459,20 @@ def get_upcoming(user_id: int, now_ms: int) -> list[dict]:
 def get_courses_for_user(user_id: int) -> list[dict]:
     """Course list for the chat generation context (chatInternal.ts:124-140)."""
     conn = _conn()
+    course_ids = _active_course_ids(conn, user_id)
+
+    rows_by_id: dict[str, Any] = {}
+    if course_ids:
+        placeholders = ",".join("?" * len(course_ids))
+        for row in conn.execute(
+            f"SELECT * FROM schoology_courses WHERE course_id IN ({placeholders})",
+            course_ids,
+        ).fetchall():
+            rows_by_id[row["course_id"]] = row
+
     courses: list[dict] = []
-    for course_id in _active_course_ids(conn, user_id):
-        row = conn.execute(
-            "SELECT * FROM schoology_courses WHERE course_id = ?", (course_id,)
-        ).fetchone()
+    for course_id in course_ids:
+        row = rows_by_id.get(course_id)
         if not row:
             continue
         data = json.loads(row["data_json"]) or {}

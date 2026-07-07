@@ -158,15 +158,21 @@ export function useLiveQuery<T>(opts: LiveQueryOptions<T>): LiveQueryResult<T> {
     return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
   }, [enabled, eventTypesKey, runFetch, scheduleDebouncedRefetch]);
 
-  // Refetch on focus / tab becoming visible.
+  // Refetch on focus / tab becoming visible. Both events fire together on a
+  // tab return, so a short min-interval guard collapses them to one fetch.
+  const lastFocusFetchRef = useRef(0);
   useEffect(() => {
     if (!enabled || !refetchOnFocus) return;
 
-    const onFocus = () => {
+    const maybeFetch = () => {
+      const now = Date.now();
+      if (now - lastFocusFetchRef.current < 1_000) return;
+      lastFocusFetchRef.current = now;
       void runFetch();
     };
+    const onFocus = () => maybeFetch();
     const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible') void runFetch();
+      if (document.visibilityState === 'visible') maybeFetch();
     };
 
     window.addEventListener('focus', onFocus);
@@ -178,11 +184,14 @@ export function useLiveQuery<T>(opts: LiveQueryOptions<T>): LiveQueryResult<T> {
   }, [enabled, refetchOnFocus, runFetch]);
 
   // Backstop poll: slow while the channel is live, faster while degraded.
+  // Skip ticks while the tab is hidden (background tabs shouldn't poll
+  // forever); the visibility listener above refetches once on return.
   const channelState = useEventChannelState();
   useEffect(() => {
     if (!enabled) return;
     const intervalMs = channelState === 'down' ? degradedPollMs : backstopMs;
     const timer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
       void runFetch();
     }, intervalMs);
     return () => clearInterval(timer);

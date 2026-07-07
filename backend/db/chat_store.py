@@ -217,7 +217,7 @@ def list_threads(user_id: int) -> list[dict]:
 
 def list_messages(thread_id: str) -> list[dict]:
     rows = _conn().execute(
-        "SELECT * FROM chat_messages WHERE thread_id = ? ORDER BY created_at ASC, id",
+        "SELECT * FROM chat_messages WHERE thread_id = ? ORDER BY created_at ASC, rowid ASC",
         (thread_id,),
     ).fetchall()
     return [_message_doc(row) for row in rows]
@@ -371,6 +371,10 @@ def create_generation(
 
     if created_thread:
         pending.append(("chat.thread.created", _thread_event(_thread_doc(thread_row))))
+    else:
+        # Existing thread: surface the bumped updated_at/last_message_at now so the
+        # sidebar reorders immediately, not only once the generation completes.
+        pending.append(("chat.thread.updated", _thread_event(_thread_doc(thread_row))))
     pending.append(("chat.message.created", _message_event(_message_doc(user_message_row))))
     pending.append(
         ("chat.generation.updated", _generation_event(_generation_doc(generation_row)))
@@ -894,6 +898,16 @@ def fail_stale_generations(now_ms: int, stale_after_ms: int) -> int:
     skipped. Also terminates any attached token-SSE stream (best-effort)."""
     cutoff = now_ms - stale_after_ms
     conn = _conn()
+
+    # Cheap read-only pre-check so the 60s tick doesn't grab the write lock when
+    # there's nothing to reap (the common case).
+    if not conn.execute(
+        "SELECT 1 FROM chat_generations"
+        " WHERE status IN ('queued','streaming') AND updated_at < ? LIMIT 1",
+        (cutoff,),
+    ).fetchone():
+        return 0
+
     cursor = conn.cursor()
     reaped_ids: list[str] = []
     try:
@@ -953,7 +967,7 @@ def fail_stale_generations(now_ms: int, stale_after_ms: int) -> int:
             live_stream.publish_terminal(
                 generation_id,
                 status="failed",
-                content="",
+                content=message_row["content"],
                 updated_at=now_ms,
                 error_code="stale_generation",
                 error_message=STALE_GENERATION_MESSAGE,

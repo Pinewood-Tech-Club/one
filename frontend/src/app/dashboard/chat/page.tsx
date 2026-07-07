@@ -682,6 +682,31 @@ export default function ChatPage() {
     [],
   );
 
+  // Probe for an in-flight generation and resume streaming from a fresh
+  // snapshot. No-ops if the thread changed or this tab already streams.
+  const probeActiveGeneration = useCallback(async (threadId: string) => {
+    try {
+      const { generation } = await getActiveGeneration(threadId);
+      if (selectedThreadIdRef.current !== threadId || streamingRef.current) return;
+      if (generation && ACTIVE_STATUSES.has(generation.status)) {
+        setStreaming({
+          content: '',
+          status: generation.status,
+          activity: generation.activity ?? null,
+          generationId: generation._id,
+          toolCalls: [],
+        });
+        setCancelRequested(Boolean(generation.cancelRequested));
+      }
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 403) {
+        setForceNotEntitled(true);
+      } else {
+        console.error('[Chat] active-generation fetch failed:', err);
+      }
+    }
+  }, []);
+
   // ── Token-SSE handlers (rendering pipeline unchanged) ──────────────────────
 
   const onSnapshot = useCallback((data: Record<string, unknown>) => {
@@ -894,8 +919,22 @@ export default function ChatPage() {
       const idx = prev.findIndex((m) => m._id === message._id);
       let next: ChatMessage[];
       if (idx >= 0) {
+        // Already present by real id (skip-if-_id-present guard) — update in place.
         next = [...prev];
         next[idx] = message;
+      } else if (message.role === 'user') {
+        // Our own send: the event can arrive before the POST response swaps the
+        // optimistic temp id. Adopt the real id on the matching temp bubble in
+        // place instead of appending a duplicate.
+        const tempIdx = prev.findIndex(
+          (m) => m._id.startsWith('temp-') && m.content.trim() === message.content.trim(),
+        );
+        if (tempIdx >= 0) {
+          next = [...prev];
+          next[tempIdx] = message;
+        } else {
+          next = [...prev, message];
+        }
       } else {
         next = [...prev, message];
       }
@@ -962,6 +1001,17 @@ export default function ChatPage() {
     }
   });
 
+  // After an SSE outage, events may have been missed. Resync the selected
+  // thread's messages and active-generation state (mirrors the mount/select
+  // logic). The typed handlers above early-return on $reconnected; this one
+  // owns the recovery. No-ops when no thread is selected.
+  useAppEvents('$reconnected', () => {
+    const threadId = selectedThreadIdRef.current;
+    if (!threadId) return;
+    void loadMessages(threadId, { background: true });
+    void probeActiveGeneration(threadId);
+  });
+
   // ── Thread selection / hash routing ────────────────────────────────────────
 
   useEffect(() => {
@@ -996,29 +1046,8 @@ export default function ChatPage() {
     // A send from this tab already holds the streaming state; only probe for
     // an in-flight generation when arriving at the thread some other way.
     if (fromSend) return;
-    void (async () => {
-      try {
-        const { generation } = await getActiveGeneration(threadId);
-        if (selectedThreadIdRef.current !== threadId || streamingRef.current) return;
-        if (generation && ACTIVE_STATUSES.has(generation.status)) {
-          setStreaming({
-            content: '',
-            status: generation.status,
-            activity: generation.activity ?? null,
-            generationId: generation._id,
-            toolCalls: [],
-          });
-          setCancelRequested(Boolean(generation.cancelRequested));
-        }
-      } catch (err) {
-        if (err instanceof ApiError && err.status === 403) {
-          setForceNotEntitled(true);
-        } else {
-          console.error('[Chat] active-generation fetch failed:', err);
-        }
-      }
-    })();
-  }, [hashInitialized, selectedThreadId, loadMessages]);
+    void probeActiveGeneration(threadId);
+  }, [hashInitialized, selectedThreadId, loadMessages, probeActiveGeneration]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
