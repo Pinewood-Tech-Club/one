@@ -48,7 +48,7 @@ def auth_google():
 def auth_google_callback():
     """Handle Google OAuth callback"""
     logger.debug("Google OAuth callback hit")
-    logger.debug(f"Request args: {request.args}")
+    logger.debug("Request args keys: %s", sorted(request.args.keys()))
     try:
         returned_state = request.args.get("state", "")
         expected_state = session.pop("google_oauth_state", None)
