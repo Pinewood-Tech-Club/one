@@ -15,8 +15,8 @@ from db.mobile import (
     insert_mobile_auth_code,
     insert_mobile_refresh_token,
     insert_mobile_web_ticket,
-    rotate_mobile_refresh_token,
     revoke_mobile_refresh_token_for_user,
+    rotate_mobile_refresh_token,
     utcnow,
 )
 from db.pool import get_conn

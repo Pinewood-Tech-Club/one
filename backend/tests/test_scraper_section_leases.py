@@ -5,8 +5,8 @@ owner_token so a superseded worker can no longer mutate the active run.
 """
 from datetime import timedelta
 
-from db.pool import get_conn
 from config import Config
+from db.pool import get_conn
 from services.scraper.store import (
     acquire_section_run,
     complete_section_run,
