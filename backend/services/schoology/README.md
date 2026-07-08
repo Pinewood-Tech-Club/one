@@ -1,12 +1,13 @@
 # Schoology Service
 
-Python package for Schoology API wrapper and Convex cache synchronization.
+Python package for the Schoology API wrapper and the local SQLite cache sync.
 
 ## Overview
 
 This package provides a clean interface to:
 - Interact with the Schoology API using OAuth authentication
-- Automatically synchronize Schoology data (courses, assignments) to Convex cache
+- Automatically synchronize Schoology data (courses, assignments) into the local
+  SQLite cache (`db.schoology_cache_store`)
 - Handle OAuth flows for Schoology authentication
 
 ## Installation
@@ -54,10 +55,9 @@ service = SchoologyService(
     access_token_secret="user_access_token_secret",
     consumer_key="your_consumer_key",
     consumer_secret="your_consumer_secret",
-    convex_url="https://your-convex-deployment.convex.cloud"
 )
 
-# Fetch courses (automatically syncs to Convex)
+# Fetch courses (automatically syncs to the SQLite cache)
 courses = service.get_courses()
 
 # Fetch assignments for a course
@@ -66,7 +66,7 @@ assignments = service.get_assignments(course_id="12345")
 # Get upcoming assignments (within next 7 days, computed from Schoology API)
 upcoming = service.get_upcoming_assignments(days=7)
 
-# Refresh all data in Convex cache
+# Refresh all data into the SQLite cache
 result = service.refresh_all()
 
 # Clear user's cache when disconnecting
@@ -75,7 +75,8 @@ service.disconnect()
 
 ## Features
 
-- **Automatic Convex Sync**: All data fetching methods automatically update the Convex cache
+- **Automatic Cache Sync**: All data fetching methods automatically update the
+  local SQLite cache via `db.schoology_cache_store`
 - **Upcoming Assignments**: Smart filtering of assignments due within a specified timeframe
 - **Error Handling**: Graceful handling of API errors and date parsing issues
 - **Stateless OAuth**: OAuth helpers don't require database access
@@ -84,7 +85,6 @@ service.disconnect()
 
 - Python 3.8+
 - schoolopy (Schoology API wrapper)
-- convex (Convex Python client)
 - requests-oauthlib (OAuth 1.0a)
 
 ## License

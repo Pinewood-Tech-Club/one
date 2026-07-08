@@ -1,9 +1,8 @@
 'use client';
 
 import { useEffect } from 'react';
-import { useQuery } from 'convex/react';
-import { api } from '../../../convex/_generated/api';
 import { useLoading } from '@/context/LoadingContext';
+import type { UpcomingAssignment } from '@/lib/api';
 import { Carosuel, CarosuelItem } from "./Carosuel";
 import { AssignmentCard } from "./AssignmentCard";
 
@@ -20,7 +19,7 @@ function buildSchoologyLink(assignmentId: string | number): string {
   return `https://schoology.pinewood.edu/assignment/${assignmentId}/info`;
 }
 
-// Transform Convex data to AssignmentCard props
+// Transform a merged assignment record into AssignmentCard props
 interface AssignmentCardData {
   id: number;
   name: string;
@@ -31,21 +30,24 @@ interface AssignmentCardData {
   schoologyLink: string;
 }
 
-function transformAssignment(item: any): AssignmentCardData {
+function transformAssignment(item: UpcomingAssignment): AssignmentCardData {
   return {
     id: Number(item.id || 0),
     name: item.title || 'Untitled Assignment',
-    due: parseSchoologyDate(item.due || ''),
+    due: parseSchoologyDate(String(item.due || '')),
     course: item.course_title || 'Unknown Course',
     section: item.section_title || '',
     description: item.description || '',
-    schoologyLink: buildSchoologyLink(item.id),
+    schoologyLink: buildSchoologyLink(item.id ?? 0),
   };
 }
 
-export function UpcomingAssignmentsCarosuel() {
+interface UpcomingAssignmentsCarosuelProps {
+  assignments: UpcomingAssignment[] | undefined;
+}
+
+export function UpcomingAssignmentsCarosuel({ assignments: upcomingAssignments }: UpcomingAssignmentsCarosuelProps) {
   const { setLoading } = useLoading();
-  const upcomingAssignments = useQuery(api.schoologyCache.getUpcoming);
 
   // Manage loading state based on query status
   useEffect(() => {

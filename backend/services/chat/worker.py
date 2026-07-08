@@ -5,9 +5,15 @@ import logging
 import sys
 import time
 
-from . import ChatConfigurationError, ChatContractError, ChatGenerationNotFoundError, run_generation
-from . import convex_sync
-from . import live_stream
+from db import chat_store
+
+from . import (
+    ChatConfigurationError,
+    ChatContractError,
+    ChatGenerationNotFoundError,
+    live_stream,
+    run_generation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +25,7 @@ def _now_ms() -> int:
 def _mark_failed(generation_id: str, error_code: str, error_message: str) -> None:
     completed_at = _now_ms()
     try:
-        convex_sync.mark_generation_failed(
+        chat_store.mark_generation_failed(
             generation_id,
             error_code,
             error_message,

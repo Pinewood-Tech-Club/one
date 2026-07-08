@@ -8,23 +8,23 @@ import json
 import re
 import secrets
 from datetime import timedelta
-from urllib.parse import urlencode, urlparse, urlunparse, parse_qsl
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import requests
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from auth.google import get_user_info
-from auth.jwt_utils import create_convex_token, create_mobile_access_token
+from auth.jwt_utils import create_mobile_access_token
 from config import Config
-from db.encryption import decrypt_token, encrypt_token
 from db import mobile as mobile_db
+from db.app_users import (
+    ensure_app_state,
+    set_schoology_connected,
+    update_onboarding_step,
+)
+from db.encryption import decrypt_token, encrypt_token
 from db.tokens import save_schoology_access_tokens
 from db.users import get_or_create_user, get_user_by_id
-from onboarding import (
-    get_or_create_user as convex_get_or_create_user,
-    update_onboarding_step,
-    update_schoology_connected,
-)
 from services.schoology import complete_oauth, start_oauth
 
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/auth"
@@ -269,9 +269,9 @@ def process_google_callback(code: str, state_token: str) -> tuple[str, str, str 
     user_id = get_or_create_user(google_user_id, email, name)
 
     try:
-        convex_get_or_create_user(Config.CONVEX_URL, str(user_id))
+        ensure_app_state(user_id)
     except Exception:
-        # Convex bootstrap is best effort for mobile auth.
+        # App-state bootstrap is best effort for mobile auth.
         pass
 
     one_time_code = _issue_mobile_auth_code(
@@ -519,10 +519,10 @@ def process_schoology_callback(oauth_token: str, state_token: str) -> tuple[str,
 
     save_schoology_access_tokens(state_user_id, access_token, access_token_secret)
     try:
-        update_schoology_connected(Config.CONVEX_URL, str(state_user_id), True)
-        update_onboarding_step(Config.CONVEX_URL, str(state_user_id), "smart_consent")
+        set_schoology_connected(state_user_id, True)
+        update_onboarding_step(state_user_id, "smart_consent")
     except Exception:
-        # OAuth success should not fail if Convex sync is temporarily unavailable.
+        # OAuth success should not fail if the app-state write is temporarily unavailable.
         pass
 
     one_time_code = _issue_mobile_auth_code(
@@ -644,19 +644,6 @@ def logout_mobile_session(
     device_id = token_payload.get("device_id")
     if isinstance(device_id, str) and validate_device_id(device_id):
         mobile_db.revoke_mobile_refresh_tokens_for_device(user_id, device_id, now)
-
-
-def create_mobile_convex_token(user: dict) -> dict:
-    token = create_convex_token(
-        user_id=user["id"],
-        email=user["email"],
-        name=user["name"],
-        expires_in_seconds=300,
-    )
-    return {
-        "token": token,
-        "expires_in": 300,
-    }
 
 
 def create_web_session_ticket(user_id: int, device_id: str) -> dict:

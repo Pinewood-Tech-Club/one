@@ -1,0 +1,47 @@
+name: CI Frontend
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/ci-frontend.yml'
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Hard gate: the type checker is clean today and must stay clean.
+      - name: Typecheck
+        run: pnpm typecheck
+
+      # Non-blocking ratchet: ~71 pre-existing eslint violations. Runs for
+      # visibility; flip to a hard gate once the backlog is burned down.
+      - name: Lint
+        run: pnpm lint
+        continue-on-error: true
+
+      # Non-blocking for now: `next build` needs NEXT_PUBLIC_* env configured
+      # as repo secrets/vars to pass reliably. Make it a hard gate once those
+      # are wired up in repo settings.
+      - name: Build
+        run: pnpm build
+        continue-on-error: true

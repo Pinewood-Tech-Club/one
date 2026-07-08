@@ -1,6 +1,6 @@
 DEVTOOLS := /bin/bash scripts/run-devtools.sh
 
-.PHONY: setup init doctor secret-export dev dev-frontend dev-backend dev-convex dev-tunnel dev-scraper
+.PHONY: setup init doctor secret-export dev dev-frontend dev-backend dev-tunnel dev-scraper
 
 setup:
 	$(DEVTOOLS) setup
@@ -24,10 +24,6 @@ dev-frontend:
 dev-backend:
 	$(DEVTOOLS) doctor --component backend
 	cd backend && ./env/bin/python app.py
-
-dev-convex:
-	$(DEVTOOLS) doctor --component convex
-	$(DEVTOOLS) print-convex-command | /bin/sh
 
 dev-tunnel:
 	$(DEVTOOLS) doctor --component backend

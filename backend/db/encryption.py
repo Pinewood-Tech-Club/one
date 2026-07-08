@@ -2,6 +2,7 @@
 Encryption utilities for secure token storage
 """
 from cryptography.fernet import Fernet
+
 from config import Config
 
 ENCRYPTION_KEY = Config.ENCRYPTION_KEY

@@ -1,0 +1,19 @@
+# CODEOWNERS for Pinewood One
+# These owners are requested for review when someone opens a PR touching
+# matching paths. See:
+# https://docs.github.com/articles/about-code-owners
+
+# Default owner for everything in the repo.
+*                           @AdamEXu
+
+# Top-level applications.
+/frontend/                  @AdamEXu
+/backend/                   @AdamEXu
+
+# Security-sensitive backend areas (extra scrutiny on review).
+/backend/auth/              @AdamEXu
+/backend/db/                @AdamEXu
+/backend/services/scraper/  @AdamEXu
+
+# Repository automation and policy.
+/.github/                   @AdamEXu

@@ -1,0 +1,38 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra"
+
+[tool.mutmut]
+# Mutation-testing configuration, read by mutmut >= 3.x from this section.
+# Run from the backend/ directory: `mutmut run`.
+#
+# Only the modules that are actually covered by the tests/ suite are mutated,
+# so a surviving mutant always points at a genuine gap in an existing test.
+# NOTE: mutmut renamed the old `paths_to_mutate` key to `source_paths`; this is
+# the current, non-deprecated spelling and accepts individual files.
+source_paths = [
+    "db/encryption.py",
+    "auth/jwt_utils.py",
+    "db/mobile.py",
+    "db/job_leases.py",
+    "services/scraper/store.py",
+]
+# mutmut 3.x is pytest-native: it invokes pytest itself instead of taking a
+# free-form runner string, so the "test runner command" is expressed as the
+# extra CLI args passed to pytest. This is equivalent to `python -m pytest -q`.
+pytest_add_cli_args = ["-q"]
+# mutmut runs the suite from an isolated ./mutants/ copy that contains only the
+# mutated files plus tests/. These first-party modules are imported (directly or
+# transitively) by the tested code and by tests/conftest.py but are NOT mutated,
+# so they must be copied verbatim, along with the package __init__.py files that
+# make the imports resolve.
+also_copy = [
+    "config.py",
+    "db/__init__.py",
+    "db/init.py",
+    "db/pool.py",
+    "auth/__init__.py",
+    "services/__init__.py",
+    "services/scraper/__init__.py",
+]

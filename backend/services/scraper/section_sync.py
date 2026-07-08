@@ -3,9 +3,9 @@ Section-level sync logic for the Schoology shared-content scraper.
 """
 from __future__ import annotations
 
-from datetime import datetime
 import hashlib
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -378,7 +378,7 @@ def run_section_sync(section_id: str, credential_user_id: int, owner_token: str)
 
     assignments = service.get_assignments(
         section_id,
-        sync_to_convex=False,
+        sync_to_cache=False,
         with_attachments=True,
     )
     store.heartbeat_section_run(section_id, owner_token, store.utcnow())

@@ -1,0 +1,46 @@
+name: backend
+
+on:
+  pull_request:
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend.yml"
+  push:
+    branches:
+      - main
+      - dev
+    paths:
+      - "backend/**"
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ruff
+        run: pip install ruff==0.9.6
+
+      - name: Ruff lint
+        run: ruff check .
+
+      # NOTE: `ruff format --check .` is intentionally omitted for now.
+      # A first-time format pass would reformat ~46 files, which does not
+      # belong in a security-focused PR. Enable it as a follow-up once a
+      # dedicated formatting commit lands.
+
+      - name: Byte-compile
+        run: python -m compileall -q -x "env/" .
+
+      - name: Install test dependencies
+        run: pip install -r requirements.txt -r requirements-test.txt
+
+      - name: Run tests
+        run: python -m pytest

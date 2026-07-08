@@ -3,6 +3,7 @@ Session database operations
 """
 import secrets
 from datetime import datetime, timedelta
+
 from config import Config
 from db.pool import get_conn
 from db.users import get_user_by_id

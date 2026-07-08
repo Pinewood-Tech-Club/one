@@ -103,28 +103,32 @@ class Config:
     )
 
     # Database paths
-    MAIN_DB_PATH = "main.db"
-    SESSIONS_DB_PATH = "api_sessions.db"
+    MAIN_DB_PATH = os.environ.get("MAIN_DB_PATH", str(BACKEND_ROOT / "main.db"))
+    SESSIONS_DB_PATH = os.environ.get("SESSIONS_DB_PATH", str(BACKEND_ROOT / "api_sessions.db"))
     SCRAPER_DB_PATH = os.environ.get("SCRAPER_DB_PATH", str(BACKEND_ROOT / "scraper.db"))
-
-    # Convex configuration
-    CONVEX_URL = os.environ.get("CONVEX_URL", "http://127.0.0.1:3210")
-    CONVEX_ADMIN_KEY = os.environ.get("CONVEX_ADMIN_KEY")
-    CONVEX_BRIDGE_SECRET = (
-        os.environ.get("CONVEX_BRIDGE_SECRET")
-        or os.environ.get("CHAT_INTERNAL_SECRET")
-    )
+    CHAT_DB_PATH = os.environ.get("CHAT_DB_PATH", str(BACKEND_ROOT / "chat.db"))
 
     # Chat / LLM configuration
     LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "https://openrouter.ai/api/v1")
     LLM_API_KEY = os.environ.get("LLM_API_KEY")
     LLM_MODEL = os.environ.get("LLM_MODEL", "")
+
+    # TinyFish web tools (Search + Fetch) for chat. Single shared account key,
+    # passed as the X-API-Key header. Free tier, no credits.
+    TINYFISH_API_KEY = os.environ.get("TINYFISH_API_KEY")
     LLM_CONNECT_TIMEOUT_SECONDS = float(os.environ.get("LLM_CONNECT_TIMEOUT_SECONDS", "10"))
     LLM_IDLE_TIMEOUT_SECONDS = float(os.environ.get("LLM_IDLE_TIMEOUT_SECONDS", "30"))
-    CHAT_INTERNAL_SECRET = os.environ.get("CHAT_INTERNAL_SECRET")
     CHAT_STALE_AFTER_SECONDS = int(os.environ.get("CHAT_STALE_AFTER_SECONDS", "120"))
-    CHAT_CONVEX_HEARTBEAT_MS = int(os.environ.get("CHAT_CONVEX_HEARTBEAT_MS", "5000"))
+    CHAT_HEARTBEAT_MS = int(
+        os.environ.get("CHAT_HEARTBEAT_MS")
+        or os.environ.get("CHAT_CONVEX_HEARTBEAT_MS", "5000")
+    )
+    CHAT_REAPER_INTERVAL_SECONDS = int(os.environ.get("CHAT_REAPER_INTERVAL_SECONDS", "60"))
     CHAT_SSE_HEARTBEAT_SECONDS = int(os.environ.get("CHAT_SSE_HEARTBEAT_SECONDS", "15"))
+    APP_EVENTS_TTL_SECONDS = int(os.environ.get("APP_EVENTS_TTL_SECONDS", "3600"))
+    APP_EVENTS_SSE_HEARTBEAT_SECONDS = int(
+        os.environ.get("APP_EVENTS_SSE_HEARTBEAT_SECONDS", "15")
+    )
     CHAT_REDIS_ACTIVE_TTL_SECONDS = int(os.environ.get("CHAT_REDIS_ACTIVE_TTL_SECONDS", "3600"))
     CHAT_REDIS_FINAL_TTL_SECONDS = int(os.environ.get("CHAT_REDIS_FINAL_TTL_SECONDS", "600"))
     UPSTASH_REDIS_URL = os.environ.get("UPSTASH_REDIS_URL")
@@ -205,16 +209,16 @@ class Config:
             print("Schoology OAuth configured with official developer credentials.")
             print(f"Domain: {cls.SCHOOLOGY_DOMAIN}")
 
-        if not cls.CONVEX_BRIDGE_SECRET:
-            print(
-                "WARNING: Convex bridge secret is not configured. "
-                "Backend-triggered Convex internal updates will fail until "
-                "CONVEX_BRIDGE_SECRET or CHAT_INTERNAL_SECRET is set in both backend and Convex."
-            )
-
         if not Path(cls.GOOGLE_DRIVE_TOKEN_FILE).exists():
             print(
                 "INFO: Google Drive scraper token not found. "
                 "Google Drive link attachments will stay metadata-only until "
                 "GOOGLE_DRIVE_TOKEN_FILE is provisioned."
+            )
+
+        if not cls.TINYFISH_API_KEY:
+            print(
+                "INFO: TINYFISH_API_KEY not set. Chat web tools (fetch_url, "
+                "web_search) will be offered but fail until it is configured in "
+                "backend/.env."
             )

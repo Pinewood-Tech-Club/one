@@ -69,7 +69,8 @@ class GenerationContext:
     transcript: list[ChatTranscriptMessage]
 
     @classmethod
-    def from_convex(cls, generation_id: str, payload: dict[str, Any]) -> "GenerationContext":
+    def from_payload(cls, generation_id: str, payload: dict[str, Any]) -> "GenerationContext":
+        """Parse the chat_store.get_generation_context payload (camelCase, ids under "_id")."""
         generation = _require_dict(payload, "generation")
         thread = _require_dict(payload, "thread")
         assistant_message = _require_dict(payload, "assistantMessage")

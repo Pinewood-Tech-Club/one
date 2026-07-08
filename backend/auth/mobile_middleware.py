@@ -3,7 +3,7 @@ Bearer-token middleware for mobile API routes.
 """
 from functools import wraps
 
-from flask import jsonify, g, request
+from flask import g, jsonify, request
 
 from auth.jwt_utils import verify_mobile_access_token
 from db.users import get_user_by_id

@@ -3,18 +3,18 @@ Schoology chat tool definitions and execution helpers.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
-from pathlib import Path
 import re
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from itsdangerous import BadSignature, URLSafeSerializer
 
 from config import Config
 from services.schoology.runtime import create_schoology_service
-from services.scraper.extraction import read_extracted_attachment_text
 from services.scraper import store as scraper_store
+from services.scraper.extraction import read_extracted_attachment_text
 
 
 class SchoologyToolError(RuntimeError):
@@ -406,7 +406,7 @@ def _assignment_detail(arguments: dict[str, Any], *, user_id: int) -> ToolExecut
         service = create_schoology_service(user_id)
         if not service:
             raise SchoologyToolError("Schoology is not connected for this user")
-        for assignment in service.get_assignments(section_id, sync_to_convex=False, with_attachments=True):
+        for assignment in service.get_assignments(section_id, sync_to_cache=False, with_attachments=True):
             candidate_id = str(assignment.get("id") or assignment.get("grade_item_id") or "")
             if candidate_id != schoology_id:
                 continue
