@@ -4,21 +4,21 @@ Schoology API routes.
 import time
 
 from flask import Blueprint, jsonify, redirect, request
-from config import Config
+
 from auth.middleware import auth_required
-from services.schoology import start_oauth, complete_oauth
-from services.schoology.refresh import start_schoology_refresh_for_user
-from services.schoology.runtime import create_schoology_service
+from config import Config
+from db import app_users, schoology_cache_store
+from db.encryption import decrypt_token
 from db.tokens import (
+    delete_schoology_tokens,
+    get_schoology_request_token_record,
+    save_schoology_access_tokens,
     save_schoology_credentials,
     save_schoology_request_tokens,
-    save_schoology_access_tokens,
-    get_schoology_request_token_record,
-    delete_schoology_tokens
 )
-from db.encryption import decrypt_token
-from db import app_users, schoology_cache_store
-from services.schoology import SchoologyService
+from services.schoology import SchoologyService, complete_oauth, start_oauth
+from services.schoology.refresh import start_schoology_refresh_for_user
+from services.schoology.runtime import create_schoology_service
 
 # Blueprint for /oauth/schoology/* routes
 oauth_bp = Blueprint('schoology_oauth', __name__, url_prefix='/oauth/schoology')
@@ -226,7 +226,7 @@ def schoology_courses(user):
             print(f"[DEBUG] Failed to create Schoology service for user_id: {user['id']}")
             return jsonify({"error": "Schoology account not connected"}), 400
 
-        print(f"[DEBUG] Fetching courses from Schoology API...")
+        print("[DEBUG] Fetching courses from Schoology API...")
         courses = service.get_courses()  # Also refreshes the local cache
         print(f"[DEBUG] Retrieved {len(courses)} courses")
 

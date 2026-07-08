@@ -7,8 +7,13 @@ import time
 
 from db import chat_store
 
-from . import ChatConfigurationError, ChatContractError, ChatGenerationNotFoundError, run_generation
-from . import live_stream
+from . import (
+    ChatConfigurationError,
+    ChatContractError,
+    ChatGenerationNotFoundError,
+    live_stream,
+    run_generation,
+)
 
 logger = logging.getLogger(__name__)
 

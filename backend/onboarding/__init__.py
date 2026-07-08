@@ -7,10 +7,16 @@ parameter is gone).
 """
 from db.app_users import (
     ensure_app_state as get_or_create_user,
+)
+from db.app_users import (
     get_user_app_state as get_user,
+)
+from db.app_users import (
     save_consent,
-    set_schoology_connected as update_schoology_connected,
     update_onboarding_step,
+)
+from db.app_users import (
+    set_schoology_connected as update_schoology_connected,
 )
 
 __all__ = [

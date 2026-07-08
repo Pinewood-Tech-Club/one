@@ -2,19 +2,22 @@
 Pinewood One Backend - Main Application Entry Point
 """
 import os
+
 from flask import Flask, jsonify
 from flask_cors import CORS
-from config import Config
-from db.init import init_db
-from extensions import limiter
+
+from api.routes import api_bp
 
 # Import blueprints
 from auth.routes import auth_bp
-from api.routes import api_bp
 from chat.routes import chat_api_bp
+from config import Config
+from db.init import init_db
 from events.routes import events_bp
-from schoology.routes import oauth_bp as schoology_oauth_bp, schoology_api_bp
+from extensions import limiter
 from mobile.routes import mobile_bp
+from schoology.routes import oauth_bp as schoology_oauth_bp
+from schoology.routes import schoology_api_bp
 from services.chat.reaper import start_reaper
 
 

@@ -12,9 +12,9 @@ from pathlib import Path
 from typing import Any
 
 from config import Config
+from db.app_users import list_eligible_scraper_users
 from db.init import init_scraper_db
 from db.tokens import get_schoology_tokens
-from db.app_users import list_eligible_scraper_users
 from services.schoology.runtime import create_schoology_service
 
 from . import store
