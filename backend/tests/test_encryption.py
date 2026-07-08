@@ -76,6 +76,41 @@ class TestDecryptFailureModes:
         assert configured.decrypt(ciphertext.encode()) == b"key-binding-check"
 
 
+class TestDecryptGuardVsExceptionPath:
+    """Distinguish the empty-input guard from the exception fallback.
+
+    Both paths return None, so a return-value assertion alone cannot tell them
+    apart: deleting the `if not encrypted_token` guard leaves every test green
+    because ""/None then fall through to the Fernet call, raise, get caught,
+    and still return None. These tests pin the *side effect* — the guard must
+    short-circuit silently, while genuinely invalid input must hit the logging
+    except branch — so removing the guard (or the log) fails a test.
+    """
+
+    def test_empty_and_none_use_guard_not_exception_path(self, capsys):
+        assert decrypt_token("") is None
+        assert decrypt_token(None) is None
+        captured = capsys.readouterr()
+        # Guard returns before Fernet runs: the except branch must NOT execute.
+        assert "Error decrypting token" not in captured.out
+        assert "Error decrypting token" not in captured.err
+
+    def test_invalid_input_reaches_logging_except_branch(self, capsys):
+        # Non-empty but undecryptable input must flow through the except branch,
+        # which logs. Asserts both that the branch is taken and its message.
+        assert decrypt_token("not-a-fernet-token") is None
+        captured = capsys.readouterr()
+        assert "Error decrypting token" in captured.out
+
+    def test_encrypt_empty_uses_guard_not_fernet(self):
+        # Symmetric guard on the encrypt side: if the `if not token` guard were
+        # removed, encrypt("") would return a real (decryptable) ciphertext
+        # instead of None. Pin that "" -> None and any real value -> not None.
+        assert encrypt_token("") is None
+        assert encrypt_token(None) is None
+        assert encrypt_token("x") is not None
+
+
 class TestHashedRequestTokenLookup:
     def test_deterministic_for_same_input(self):
         assert hash_schoology_request_token("req-token-1") == hash_schoology_request_token("req-token-1")
