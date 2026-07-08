@@ -42,7 +42,7 @@ class TinyFishNotConfigured(TinyFishError):
 def _headers() -> dict[str, str]:
     key = Config.TINYFISH_API_KEY
     if not key:
-        raise TinyFishNotConfigured("TINYFISH_API_KEY is not configured; set it in backend/.env")
+        raise TinyFishNotConfigured("Web tools are not configured.")
     return {"X-API-Key": key}
 
 
@@ -87,10 +87,10 @@ def fetch_urls(urls: list[str], *, fmt: str = "markdown") -> dict[str, Any]:
             timeout=_FETCH_CLIENT_TIMEOUT_SECONDS,
         )
     except requests.RequestException as exc:
-        raise TinyFishError(f"TinyFish fetch request failed: {exc}") from exc
+        raise TinyFishError(f"Web fetch request failed: {exc}") from exc
 
     if resp.status_code != 200:
-        raise TinyFishError(f"TinyFish fetch error: {_error_message(resp)}")
+        raise TinyFishError(f"Web fetch error: {_error_message(resp)}")
     return resp.json()
 
 
@@ -113,8 +113,8 @@ def search(query: str, *, page: int = 0, **params: Any) -> dict[str, Any]:
             timeout=_SEARCH_CLIENT_TIMEOUT_SECONDS,
         )
     except requests.RequestException as exc:
-        raise TinyFishError(f"TinyFish search request failed: {exc}") from exc
+        raise TinyFishError(f"Web search request failed: {exc}") from exc
 
     if resp.status_code != 200:
-        raise TinyFishError(f"TinyFish search error: {_error_message(resp)}")
+        raise TinyFishError(f"Web search error: {_error_message(resp)}")
     return resp.json()
