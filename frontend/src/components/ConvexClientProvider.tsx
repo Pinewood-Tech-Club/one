@@ -24,7 +24,10 @@ async function fetchConvexToken(): Promise<string | null> {
     );
     if (response.ok) {
       const { token } = await response.json();
-      if (resolvedAuthReady === null) {
+      // A successful fetch always marks auth ready — including after an
+      // earlier failure, so a transient blip doesn't latch authReady=false
+      // forever and strand consumers on their loading states.
+      if (resolvedAuthReady !== true) {
         resolvedAuthReady = true;
         authReadyListeners.forEach((fn) => fn(true));
       }
@@ -57,9 +60,9 @@ export function ConvexClientProvider({ children }: { children: ReactNode }) {
     // If the token fetch already completed before this component mounted, sync immediately.
     if (resolvedAuthReady !== null) {
       setAuthReady(resolvedAuthReady);
-      return;
     }
-    // Otherwise wait for the module-level callback.
+    // Keep listening either way — a failed first fetch can be followed by a
+    // successful refetch that flips auth ready to true.
     authReadyListeners.push(setAuthReady);
     return () => {
       const idx = authReadyListeners.indexOf(setAuthReady);

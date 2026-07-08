@@ -103,8 +103,8 @@ class Config:
     )
 
     # Database paths
-    MAIN_DB_PATH = "main.db"
-    SESSIONS_DB_PATH = "api_sessions.db"
+    MAIN_DB_PATH = os.environ.get("MAIN_DB_PATH", str(BACKEND_ROOT / "main.db"))
+    SESSIONS_DB_PATH = os.environ.get("SESSIONS_DB_PATH", str(BACKEND_ROOT / "api_sessions.db"))
     SCRAPER_DB_PATH = os.environ.get("SCRAPER_DB_PATH", str(BACKEND_ROOT / "scraper.db"))
 
     # Convex configuration

@@ -79,6 +79,9 @@ def generate_chat_completion():
 
     generation_id = generation_id.strip()
 
+    user_id = data.get("userId")
+    user_id = user_id.strip() if isinstance(user_id, str) and user_id.strip() else None
+
     if not _mark_generation_started(generation_id):
         return jsonify({"generationId": generation_id, "queued": False, "alreadyRunning": True}), 202
 
@@ -89,6 +92,7 @@ def generate_chat_completion():
         provider="pending",
         model="pending",
         updated_at=_now_ms(),
+        user_id=user_id,
     )
 
     process = subprocess.Popen(

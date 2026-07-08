@@ -41,6 +41,10 @@ def get_generation_context(generation_id: str) -> dict[str, Any] | None:
     return _call_action("getGenerationContext", {"generationId": generation_id})
 
 
+def get_generation_owner(generation_id: str) -> dict[str, Any] | None:
+    return _call_action("getGenerationOwner", {"generationId": generation_id})
+
+
 def is_generation_cancel_requested(generation_id: str) -> bool:
     result = _call_action("getGenerationCancelState", {"generationId": generation_id})
     if isinstance(result, dict):

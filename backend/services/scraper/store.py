@@ -5,12 +5,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from config import Config
 from db.pool import get_conn
+
+logger = logging.getLogger(__name__)
 
 
 def utcnow() -> datetime:
@@ -345,7 +348,7 @@ def heartbeat_section_run(section_id: str, owner_token: str, now: datetime) -> N
 
 def complete_section_run(section_id: str, owner_token: str, now: datetime) -> None:
     conn = get_scraper_conn()
-    conn.execute(
+    cursor = conn.execute(
         """
         UPDATE section_sync_runs
         SET status = 'completed', heartbeat_at = ?, finished_at = ?
@@ -353,6 +356,18 @@ def complete_section_run(section_id: str, owner_token: str, now: datetime) -> No
         """,
         (to_db_time(now), to_db_time(now), section_id, owner_token),
     )
+    # Only the current lease owner may stamp the section as freshly synced. A
+    # zombie worker whose lease was stolen matches 0 rows above; skipping the
+    # sections update lets the section stay due instead of suppressing re-sync
+    # for a full interval and causing tombstone flapping.
+    if cursor.rowcount == 0:
+        conn.commit()
+        logger.warning(
+            "scraper_complete_section_run_lease_lost section_id=%s owner_token=%s",
+            section_id,
+            owner_token,
+        )
+        return
     conn.execute(
         """
         UPDATE sections

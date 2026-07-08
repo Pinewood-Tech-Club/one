@@ -11,7 +11,7 @@ from auth.middleware import auth_required
 from config import Config
 from onboarding import get_user as convex_get_user
 from onboarding import save_consent, update_onboarding_step
-from services.chat import live_stream
+from services.chat import convex_sync, live_stream
 
 TERMINAL_CHAT_STATUSES = {"completed", "failed", "cancelled"}
 
@@ -156,9 +156,19 @@ def stream_chat_generation_events(generation_id, user):
         return jsonify({"error": "chat_not_configured"}), 503
 
     last_event_id = request.headers.get("Last-Event-ID", "").strip()
-    snapshot = live_stream.get_live_state(generation_id)
-    if snapshot and snapshot.get("userId") and snapshot.get("userId") != str(user["id"]):
+
+    # Authoritative ownership check against Convex (the source of truth for
+    # chat generations). This must not fail open: streaming is only allowed
+    # once ownership is affirmatively confirmed.
+    try:
+        owner = convex_sync.get_generation_owner(generation_id)
+    except Exception as e:
+        print(f"[ERROR] Failed to verify chat generation ownership: {e}")
+        return jsonify({"error": "chat_stream_unavailable"}), 503
+    if not owner or owner.get("userId") != str(user["id"]):
         return jsonify({"error": "generation_not_found"}), 404
+
+    snapshot = live_stream.get_live_state(generation_id)
 
     @stream_with_context
     def generate():

@@ -36,6 +36,19 @@ export const getGenerationCancelState = action({
   },
 });
 
+export const getGenerationOwner = action({
+  args: {
+    secret: v.string(),
+    generationId: v.string(),
+  },
+  handler: async (ctx, args): Promise<any> => {
+    assertSecret(args.secret);
+    return await ctx.runQuery(internal.chatInternal.getGenerationOwner, {
+      generationId: args.generationId,
+    });
+  },
+});
+
 export const markGenerationStreaming = action({
   args: {
     secret: v.string(),
