@@ -7,7 +7,7 @@ import time
 from flask import Blueprint, Response, jsonify, request, stream_with_context
 from config import Config
 from auth.middleware import auth_required
-from db import app_users
+from db import app_users, chat_store
 from services.chat import live_stream
 
 TERMINAL_CHAT_STATUSES = {"completed", "failed", "cancelled"}
@@ -98,9 +98,16 @@ def stream_chat_generation_events(generation_id, user):
         return jsonify({"error": "chat_not_configured"}), 503
 
     last_event_id = request.headers.get("Last-Event-ID", "").strip()
-    snapshot = live_stream.get_live_state(generation_id)
-    if snapshot and snapshot.get("userId") and snapshot.get("userId") != str(user["id"]):
+
+    # Authoritative, fail-closed ownership check against SQLite (the source of
+    # truth), NOT the ephemeral Redis snapshot: the snapshot can be absent
+    # (LRU eviction, post-terminal state) and a snapshot-only check would then
+    # fail open and stream a victim's generation to any authenticated user.
+    generation = chat_store.get_generation(generation_id)
+    if not generation or generation.get("userId") != str(user["id"]):
         return jsonify({"error": "generation_not_found"}), 404
+
+    snapshot = live_stream.get_live_state(generation_id)
 
     @stream_with_context
     def generate():
