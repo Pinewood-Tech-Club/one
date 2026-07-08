@@ -17,6 +17,7 @@ from .prompting import build_responses_request
 from .provider import ChatProviderError, stream_responses_round
 from .schoology_tools import execute_tool, get_tool_definitions
 from .types import GenerationContext
+from .web_tools import WEB_TOOL_NAMES, execute_web_tool, get_web_tool_definitions
 
 logger = logging.getLogger(__name__)
 
@@ -456,8 +457,11 @@ def run_generation(generation_id: str) -> GenerationRunResult:
             round_result = stream_responses_round(
                 instructions=instructions,
                 input_items=input_items,
-                tools=get_tool_definitions(
-                    enabled=bool(context.user_record and context.user_record.schoology_connected)
+                tools=(
+                    get_tool_definitions(
+                        enabled=bool(context.user_record and context.user_record.schoology_connected)
+                    )
+                    + get_web_tool_definitions()
                 ),
                 model=model_name,
                 on_text_delta=on_text_delta,
@@ -510,7 +514,10 @@ def run_generation(generation_id: str) -> GenerationRunResult:
 
                 try:
                     parsed_arguments = _load_tool_arguments(fc=function_call)
-                    execution = execute_tool(function_call.name, parsed_arguments, user_id=context.user_id)
+                    if function_call.name in WEB_TOOL_NAMES:
+                        execution = execute_web_tool(function_call.name, parsed_arguments)
+                    else:
+                        execution = execute_tool(function_call.name, parsed_arguments, user_id=context.user_id)
                     completed_at = _now_ms()
                     tool_trace.record(
                         tool_name=function_call.name,

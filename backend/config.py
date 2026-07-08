@@ -112,6 +112,10 @@ class Config:
     LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "https://openrouter.ai/api/v1")
     LLM_API_KEY = os.environ.get("LLM_API_KEY")
     LLM_MODEL = os.environ.get("LLM_MODEL", "")
+
+    # TinyFish web tools (Search + Fetch) for chat. Single shared account key,
+    # passed as the X-API-Key header. Free tier, no credits.
+    TINYFISH_API_KEY = os.environ.get("TINYFISH_API_KEY")
     LLM_CONNECT_TIMEOUT_SECONDS = float(os.environ.get("LLM_CONNECT_TIMEOUT_SECONDS", "10"))
     LLM_IDLE_TIMEOUT_SECONDS = float(os.environ.get("LLM_IDLE_TIMEOUT_SECONDS", "30"))
     CHAT_STALE_AFTER_SECONDS = int(os.environ.get("CHAT_STALE_AFTER_SECONDS", "120"))
@@ -210,4 +214,11 @@ class Config:
                 "INFO: Google Drive scraper token not found. "
                 "Google Drive link attachments will stay metadata-only until "
                 "GOOGLE_DRIVE_TOKEN_FILE is provisioned."
+            )
+
+        if not cls.TINYFISH_API_KEY:
+            print(
+                "INFO: TINYFISH_API_KEY not set. Chat web tools (fetch_url, "
+                "web_search) will be offered but fail until it is configured in "
+                "backend/.env."
             )
