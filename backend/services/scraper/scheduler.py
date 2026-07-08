@@ -4,11 +4,11 @@ Recurring scheduler entrypoint for the Schoology shared-content scraper.
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 import secrets
 import subprocess
 import sys
 import time
+from pathlib import Path
 from typing import Any
 
 from config import Config

@@ -8,7 +8,7 @@ import json
 import re
 import secrets
 from datetime import timedelta
-from urllib.parse import urlencode, urlparse, urlunparse, parse_qsl
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import requests
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
@@ -16,12 +16,14 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from auth.google import get_user_info
 from auth.jwt_utils import create_convex_token, create_mobile_access_token
 from config import Config
-from db.encryption import decrypt_token, encrypt_token
 from db import mobile as mobile_db
+from db.encryption import decrypt_token, encrypt_token
 from db.tokens import save_schoology_access_tokens
 from db.users import get_or_create_user, get_user_by_id
 from onboarding import (
     get_or_create_user as convex_get_or_create_user,
+)
+from onboarding import (
     update_onboarding_step,
     update_schoology_connected,
 )

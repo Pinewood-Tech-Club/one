@@ -5,7 +5,7 @@ request-token lookup helper in db/init.py.
 import pytest
 from cryptography.fernet import Fernet, InvalidToken
 
-from db.encryption import encrypt_token, decrypt_token
+from db.encryption import decrypt_token, encrypt_token
 from db.init import hash_schoology_request_token
 
 

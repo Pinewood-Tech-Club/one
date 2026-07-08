@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/Pinewood-Tech-Club/one/security/advisories/new
+    about: >-
+      Please do NOT file public issues for security problems. Report
+      vulnerabilities privately via a GitHub security advisory. See
+      .github/SECURITY.md for details.

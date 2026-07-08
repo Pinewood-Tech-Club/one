@@ -3,16 +3,15 @@ SQLite-backed state store for the shared Schoology scraper.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import logging
 import re
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from config import Config
 from db.pool import get_conn
-
 
 logger = logging.getLogger(__name__)
 

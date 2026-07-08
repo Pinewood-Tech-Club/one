@@ -4,16 +4,16 @@ Attachment download helpers for the Schoology scraper.
 from __future__ import annotations
 
 import hashlib
-from pathlib import Path
 import re
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 from config import Config
 from services.schoology.client import SchoologyService
 
-from .extraction import extract_attachment_text_if_needed
 from . import store
+from .extraction import extract_attachment_text_if_needed
 from .google_drive import download_google_drive_link_if_needed, google_drive_url_info
 
 

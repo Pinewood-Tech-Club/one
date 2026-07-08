@@ -6,9 +6,11 @@ import time
 from hashlib import sha256
 
 from flask import Blueprint, Response, jsonify, request, stream_with_context
-from config import Config
+
 from auth.middleware import auth_required
-from onboarding import get_user as convex_get_user, update_onboarding_step, save_consent
+from config import Config
+from onboarding import get_user as convex_get_user
+from onboarding import save_consent, update_onboarding_step
 from services.chat import convex_sync, live_stream
 
 TERMINAL_CHAT_STATUSES = {"completed", "failed", "cancelled"}
@@ -88,7 +90,7 @@ def start_onboarding(user):
     Updates onboarding_step from "welcome" to "connect_lms".
     """
     try:
-        result = update_onboarding_step(
+        update_onboarding_step(
             Config.CONVEX_URL,
             str(user["id"]),
             "connect_lms"
@@ -128,7 +130,7 @@ def save_user_consent(user):
             "version": str(version)
         }
 
-        result = save_consent(
+        save_consent(
             Config.CONVEX_URL,
             str(user["id"]),
             consent

@@ -9,12 +9,11 @@ import base64
 import json
 from datetime import datetime, timedelta, timezone
 
-import pytest
 import jwt as pyjwt
+import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from config import Config
 from auth import jwt_utils
 from auth.jwt_utils import (
     JWT_ALGORITHM,
@@ -31,6 +30,7 @@ from auth.jwt_utils import (
     verify_mobile_access_token,
     verify_token,
 )
+from config import Config
 from tests.conftest import TEST_PRIVATE_KEY_PEM, TEST_PUBLIC_KEY_PEM
 
 USER = dict(user_id=42, email="student@pinewood.edu", name="Test Student")

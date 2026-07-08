@@ -2,13 +2,14 @@
 Schoology refresh orchestration.
 """
 import logging
-from pathlib import Path
 import secrets
 import subprocess
 import sys
+from pathlib import Path
 
 from config import Config
 from db.job_leases import acquire_schoology_refresh_lease, utcnow
+
 from .runtime import create_schoology_service
 
 logger = logging.getLogger(__name__)

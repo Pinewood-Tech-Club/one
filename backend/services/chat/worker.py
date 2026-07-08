@@ -5,9 +5,14 @@ import logging
 import sys
 import time
 
-from . import ChatConfigurationError, ChatContractError, ChatGenerationNotFoundError, run_generation
-from . import convex_sync
-from . import live_stream
+from . import (
+    ChatConfigurationError,
+    ChatContractError,
+    ChatGenerationNotFoundError,
+    convex_sync,
+    live_stream,
+    run_generation,
+)
 
 logger = logging.getLogger(__name__)
 

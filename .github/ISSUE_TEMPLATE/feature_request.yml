@@ -1,0 +1,35 @@
+name: Feature request
+description: Suggest an idea or improvement for Pinewood One
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for suggesting an improvement! Please describe the problem before the solution.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: What problem are you trying to solve? Why does it matter?
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: Describe what you'd like to happen. Include alternatives you've considered.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of the app does this affect?
+      options:
+        - frontend
+        - backend
+        - scraper
+        - convex
+        - other
+    validations:
+      required: true

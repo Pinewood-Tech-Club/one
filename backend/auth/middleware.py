@@ -2,7 +2,9 @@
 Authentication middleware
 """
 from functools import wraps
-from flask import session, jsonify
+
+from flask import jsonify, session
+
 from db.sessions import get_session
 
 

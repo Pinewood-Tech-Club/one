@@ -1,0 +1,50 @@
+name: Bug report
+description: Report a problem with Pinewood One
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Thanks for taking the time to file a bug! For **security
+        vulnerabilities**, do not use this form — report privately via a GitHub
+        security advisory (see .github/SECURITY.md).
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of the app is affected?
+      options:
+        - frontend
+        - backend
+        - scraper
+        - convex
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug, including what you expected to happen.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: How can we reproduce the problem?
+      placeholder: |
+        1. Go to '...'
+        2. Click on '...'
+        3. See error
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Browser/OS, and whether this is local dev or a deployment. Do NOT paste secrets, tokens, or real student data.
+      placeholder: e.g. Chrome 130 on macOS 14, local dev
+    validations:
+      required: false

@@ -7,8 +7,8 @@ from datetime import timedelta
 
 import pytest
 
-from db.pool import get_conn
 from config import Config
+from db.pool import get_conn
 from services.scraper.store import (
     acquire_section_run,
     complete_section_run,
