@@ -4,12 +4,14 @@ Authentication routes
 import hmac
 import logging
 import secrets
-from flask import Blueprint, redirect, request, session, jsonify
+
+from flask import Blueprint, jsonify, redirect, request, session
+
+from auth.google import exchange_code_for_token, get_google_auth_url, get_user_info
 from config import Config
-from auth.google import get_google_auth_url, exchange_code_for_token, get_user_info
-from db.users import get_or_create_user
-from db.sessions import create_session, delete_session
 from db.app_users import ensure_app_state
+from db.sessions import create_session, delete_session
+from db.users import get_or_create_user
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +31,7 @@ def auth_google():
 def auth_google_callback():
     """Handle Google OAuth callback"""
     logger.debug("Google OAuth callback hit")
-    logger.debug(f"Request args: {request.args}")
+    logger.debug("Request args keys: %s", sorted(request.args.keys()))
     try:
         returned_state = request.args.get("state", "")
         expected_state = session.pop("google_oauth_state", None)

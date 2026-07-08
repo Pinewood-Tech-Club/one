@@ -1,0 +1,12 @@
+# Test-only dependencies. The tested modules additionally need cryptography,
+# PyJWT, and python-dotenv, which are already part of requirements.txt but are
+# pinned here so the test suite can run without installing the full (heavy)
+# requirements file.
+pytest>=8.0
+cryptography>=42.0
+PyJWT>=2.8
+python-dotenv>=1.0
+
+# Mutation testing. mutmut 3.x is pytest-native and reads its config from the
+# [tool.mutmut] section of pyproject.toml. See tests/README.md.
+mutmut>=3.6

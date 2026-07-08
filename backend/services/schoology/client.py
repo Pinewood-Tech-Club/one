@@ -1,16 +1,55 @@
 """
 Schoology API client wrapper
 """
+import ipaddress
 import json
+import socket
 import time
-from pathlib import Path
-from xml.sax.saxutils import escape
-import schoolopy
-import requests
-import requests_oauthlib
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode, urljoin, urlparse
+from xml.sax.saxutils import escape
+
+import requests
+import requests_oauthlib
+import schoolopy
+
 from db import app_users, schoology_cache_store
+
+# SSRF guard settings for outbound binary downloads (attachment URLs come from
+# scraped third-party data and must not be trusted blindly).
+_ALLOWED_DOWNLOAD_SCHEMES = {"http", "https"}
+_MAX_DOWNLOAD_REDIRECTS = 5
+
+
+def validate_outbound_url(url: str) -> None:
+    """
+    Validate that a URL is safe to fetch server-side (SSRF guard).
+
+    Raises ValueError unless the URL uses http/https and its hostname resolves
+    only to public (global) IP addresses — blocking loopback, RFC1918 private,
+    link-local, CGNAT, multicast, and other reserved ranges for IPv4 and IPv6.
+    """
+    parsed = urlparse(url)
+    scheme = parsed.scheme.lower()
+    if scheme not in _ALLOWED_DOWNLOAD_SCHEMES:
+        raise ValueError(f"Blocked outbound request with disallowed scheme {parsed.scheme!r}")
+
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError("Blocked outbound request without a hostname")
+
+    port = parsed.port or (443 if scheme == "https" else 80)
+    try:
+        address_infos = socket.getaddrinfo(hostname, port, proto=socket.IPPROTO_TCP)
+    except socket.gaierror as exc:
+        raise ValueError(f"Blocked outbound request; could not resolve host {hostname!r}") from exc
+
+    for info in address_infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if not ip.is_global or ip.is_multicast:
+            raise ValueError(
+                f"Blocked outbound request to non-public address {ip} for host {hostname!r}"
+            )
 
 
 class SchoologyService:
@@ -146,28 +185,46 @@ class SchoologyService:
 
     def _download_schoology_binary(self, url: str) -> tuple[bytes, str | None]:
         resolved_url = url if urlparse(url).scheme else urljoin(self.sc.api_host, url)
-        parsed = urlparse(resolved_url)
         api_netloc = urlparse(self.sc.api_host).netloc.lower()
 
-        auth = None
-        if parsed.netloc.lower() == api_netloc:
-            auth = requests_oauthlib.OAuth1(
-                self.consumer_key,
-                client_secret=self.consumer_secret,
-                resource_owner_key=self.access_token,
-                resource_owner_secret=self.access_token_secret,
-                signature_method="PLAINTEXT",
-                signature_type="auth_header",
+        # Follow redirects manually so every hop is re-validated against the
+        # SSRF guard (Schoology download URLs redirect to presigned CDN/S3
+        # hosts, so a fixed host allowlist is not viable here).
+        current_url = resolved_url
+        for _ in range(_MAX_DOWNLOAD_REDIRECTS + 1):
+            validate_outbound_url(current_url)
+
+            # Only sign requests to our own Schoology API host; never send
+            # OAuth credentials to redirect targets on other hosts.
+            auth = None
+            if urlparse(current_url).netloc.lower() == api_netloc:
+                auth = requests_oauthlib.OAuth1(
+                    self.consumer_key,
+                    client_secret=self.consumer_secret,
+                    resource_owner_key=self.access_token,
+                    resource_owner_secret=self.access_token_secret,
+                    signature_method="PLAINTEXT",
+                    signature_type="auth_header",
+                )
+
+            response = requests.get(
+                current_url,
+                auth=auth,
+                timeout=60,
+                allow_redirects=False,
             )
 
-        response = requests.get(
-            resolved_url,
-            auth=auth,
-            timeout=60,
-            allow_redirects=True,
-        )
-        response.raise_for_status()
-        return response.content, response.headers.get("Content-Type")
+            if response.is_redirect or response.is_permanent_redirect:
+                location = response.headers.get("Location")
+                if not location:
+                    raise ValueError(f"Redirect without Location header from {current_url!r}")
+                current_url = urljoin(current_url, location)
+                continue
+
+            response.raise_for_status()
+            return response.content, response.headers.get("Content-Type")
+
+        raise ValueError(f"Too many redirects while downloading {resolved_url!r}")
 
     def _multiget(self, request_paths: list[str]) -> list[dict]:
         body = ["<?xml version=\"1.0\" encoding=\"utf-8\" ?>", "<requests>"]

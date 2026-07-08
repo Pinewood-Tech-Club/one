@@ -53,3 +53,8 @@ backend/**/*~
 
 # Backend storage
 backend/storage/
+
+# Mutation-testing (mutmut) artifacts
+backend/mutants/
+backend/.mutmut-cache
+backend/html/

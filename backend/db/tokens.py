@@ -5,8 +5,8 @@ import hashlib
 from datetime import datetime
 
 from config import Config
-from db.pool import get_conn
 from db.encryption import encrypt_token
+from db.pool import get_conn
 
 
 def hash_schoology_request_token(request_token: str) -> str:

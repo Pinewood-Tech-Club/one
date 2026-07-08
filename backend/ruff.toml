@@ -1,0 +1,14 @@
+target-version = "py312"
+line-length = 100
+extend-exclude = ["env", "__pycache__"]
+
+# Start with the highest-signal, lowest-churn rule sets (pyflakes + import
+# sorting). UP (pyupgrade) and B (flake8-bugbear) are valuable ratchet
+# follow-ups but currently surface high-churn changes; enable them once the
+# initial cleanup lands.
+[lint]
+select = ["F", "I"]
+ignore = ["E501"]
+
+[format]
+quote-style = "double"

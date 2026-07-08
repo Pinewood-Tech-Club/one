@@ -5,6 +5,7 @@ import logging
 import sys
 
 from db.job_leases import release_schoology_refresh_lease
+
 from .refresh import run_schoology_refresh_for_user
 
 logger = logging.getLogger(__name__)

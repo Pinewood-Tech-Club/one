@@ -5,8 +5,9 @@ import json
 import time
 
 from flask import Blueprint, Response, jsonify, request, stream_with_context
-from config import Config
+
 from auth.middleware import auth_required
+from config import Config
 from db import app_users, chat_store
 from services.chat import live_stream
 
