@@ -10,12 +10,14 @@ from dataclasses import dataclass
 from typing import Any
 
 from config import Config
+from db import chat_store
 
-from . import convex_sync, live_stream
+from . import live_stream
 from .prompting import build_responses_request
 from .provider import ChatProviderError, stream_responses_round
 from .schoology_tools import execute_tool, get_tool_definitions
 from .types import GenerationContext
+from .web_tools import WEB_TOOL_NAMES, execute_web_tool, get_web_tool_definitions
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +46,7 @@ class ChatGenerationNotFoundError(RuntimeError):
 
 
 class ChatContractError(RuntimeError):
-    """Raised when the backend/Convex contract is violated."""
+    """Raised when the generation-context contract is violated."""
 
 
 class _GenerationCancelled(Exception):
@@ -100,7 +102,7 @@ def _maybe_spawn_title_thread(context: GenerationContext) -> None:
         if not title:
             return
         try:
-            convex_sync.update_thread_title(thread_id, title)
+            chat_store.update_thread_title(thread_id, title)
             logger.info("chat_title_generated thread_id=%s title=%r", thread_id, title)
         except Exception as exc:
             logger.warning("chat_title_update_failed thread_id=%s error=%s", thread_id, exc)
@@ -111,12 +113,12 @@ def _maybe_spawn_title_thread(context: GenerationContext) -> None:
 def run_generation(generation_id: str) -> GenerationRunResult:
     _validate_chat_configuration()
 
-    raw_context = convex_sync.get_generation_context(generation_id)
+    raw_context = chat_store.get_generation_context(generation_id)
     if raw_context is None:
         raise ChatGenerationNotFoundError(f"Generation {generation_id} was not found")
 
     try:
-        context = GenerationContext.from_convex(generation_id, raw_context)
+        context = GenerationContext.from_payload(generation_id, raw_context)
     except ValueError as exc:
         raise ChatContractError(str(exc)) from exc
 
@@ -180,10 +182,10 @@ def run_generation(generation_id: str) -> GenerationRunResult:
         )
 
     def cancel_if_requested():
-        if not cancel_flag.is_set() and not convex_sync.is_generation_cancel_requested(context.generation_id):
+        if not cancel_flag.is_set() and not chat_store.is_cancel_requested(context.generation_id):
             return
         completed_at = _now_ms()
-        convex_sync.mark_generation_cancelled(
+        chat_store.mark_generation_cancelled(
             context.generation_id,
             completed_at,
             content=accumulated_content,
@@ -204,7 +206,7 @@ def run_generation(generation_id: str) -> GenerationRunResult:
     cancel_if_requested()
 
     started_at = _now_ms()
-    streaming_state = convex_sync.mark_generation_streaming(
+    streaming_state = chat_store.mark_generation_streaming(
         context.generation_id,
         started_at,
         provider=provider_name,
@@ -269,7 +271,8 @@ def run_generation(generation_id: str) -> GenerationRunResult:
         activity_snapshot = last_activity
         text_at_snapshot = last_text_at
 
-        worker_queue.put(lambda: convex_sync.heartbeat_generation(
+        # A terminal-state ChatStateError here is caught and logged by background_worker.
+        worker_queue.put(lambda: chat_store.heartbeat_generation(
             context.generation_id,
             now,
             last_text_at=text_at_snapshot if content_snapshot else None,
@@ -281,10 +284,10 @@ def run_generation(generation_id: str) -> GenerationRunResult:
             content=content_snapshot,
             updated_at=now,
         ))
-        worker_queue.put(lambda: cancel_flag.set() if convex_sync.is_generation_cancel_requested(context.generation_id) else None)
+        worker_queue.put(lambda: cancel_flag.set() if chat_store.is_cancel_requested(context.generation_id) else None)
 
     def heartbeat_loop():
-        interval_seconds = max(Config.CHAT_CONVEX_HEARTBEAT_MS / 1000.0, 1.0)
+        interval_seconds = max(Config.CHAT_HEARTBEAT_MS / 1000.0, 1.0)
         while not heartbeat_stop.wait(interval_seconds):
             send_heartbeat()
 
@@ -304,7 +307,7 @@ def run_generation(generation_id: str) -> GenerationRunResult:
         worker_thread.join(timeout=0.1)
         completed_at = _now_ms()
         error_message = _truncate_error(str(exc))
-        convex_sync.mark_generation_failed(
+        chat_store.mark_generation_failed(
             context.generation_id,
             "invalid_prompt_state",
             error_message,
@@ -372,7 +375,7 @@ def run_generation(generation_id: str) -> GenerationRunResult:
                 last_activity = "thinking"
                 created_at = _now_ms()
                 worker_queue.put(
-                    lambda seq=sequence, cid=call_id, name=tool_name, ts=created_at: convex_sync.upsert_tool_call(
+                    lambda seq=sequence, cid=call_id, name=tool_name, ts=created_at: chat_store.upsert_tool_call(
                         context.generation_id,
                         sequence=seq,
                         call_id=cid,
@@ -428,7 +431,7 @@ def run_generation(generation_id: str) -> GenerationRunResult:
                 sequence = tool_call_sequences[call_id]
                 updated_at = _now_ms()
                 worker_queue.put(
-                    lambda seq=sequence, cid=call_id, name=tool_name, args=arguments, ts=updated_at: convex_sync.upsert_tool_call(
+                    lambda seq=sequence, cid=call_id, name=tool_name, args=arguments, ts=updated_at: chat_store.upsert_tool_call(
                         context.generation_id,
                         sequence=seq,
                         call_id=cid,
@@ -454,8 +457,11 @@ def run_generation(generation_id: str) -> GenerationRunResult:
             round_result = stream_responses_round(
                 instructions=instructions,
                 input_items=input_items,
-                tools=get_tool_definitions(
-                    enabled=bool(context.user_record and context.user_record.schoology_connected)
+                tools=(
+                    get_tool_definitions(
+                        enabled=bool(context.user_record and context.user_record.schoology_connected)
+                    )
+                    + get_web_tool_definitions()
                 ),
                 model=model_name,
                 on_text_delta=on_text_delta,
@@ -483,7 +489,7 @@ def run_generation(generation_id: str) -> GenerationRunResult:
                 started_at = _now_ms()
                 last_activity = "tool_running"
                 worker_queue.put(
-                    lambda seq=sequence, fc=function_call, ts=started_at: convex_sync.upsert_tool_call(
+                    lambda seq=sequence, fc=function_call, ts=started_at: chat_store.upsert_tool_call(
                         context.generation_id,
                         sequence=seq,
                         call_id=fc.call_id,
@@ -508,7 +514,10 @@ def run_generation(generation_id: str) -> GenerationRunResult:
 
                 try:
                     parsed_arguments = _load_tool_arguments(fc=function_call)
-                    execution = execute_tool(function_call.name, parsed_arguments, user_id=context.user_id)
+                    if function_call.name in WEB_TOOL_NAMES:
+                        execution = execute_web_tool(function_call.name, parsed_arguments)
+                    else:
+                        execution = execute_tool(function_call.name, parsed_arguments, user_id=context.user_id)
                     completed_at = _now_ms()
                     tool_trace.record(
                         tool_name=function_call.name,
@@ -525,7 +534,7 @@ def run_generation(generation_id: str) -> GenerationRunResult:
                         }
                     )
                     worker_queue.put(
-                        lambda seq=sequence, fc=function_call, out=execution.output_text, summary=execution.summary_text, ts=completed_at: convex_sync.upsert_tool_call(
+                        lambda seq=sequence, fc=function_call, out=execution.output_text, summary=execution.summary_text, ts=completed_at: chat_store.upsert_tool_call(
                             context.generation_id,
                             sequence=seq,
                             call_id=fc.call_id,
@@ -563,7 +572,7 @@ def run_generation(generation_id: str) -> GenerationRunResult:
                         }
                     )
                     worker_queue.put(
-                        lambda seq=sequence, fc=function_call, err=error_message, out=error_output, ts=completed_at: convex_sync.upsert_tool_call(
+                        lambda seq=sequence, fc=function_call, err=error_message, out=error_output, ts=completed_at: chat_store.upsert_tool_call(
                             context.generation_id,
                             sequence=seq,
                             call_id=fc.call_id,
@@ -600,7 +609,7 @@ def run_generation(generation_id: str) -> GenerationRunResult:
         worker_queue.put(None)
         worker_thread.join(timeout=2.0)
         completed_at = _now_ms()
-        convex_sync.mark_generation_completed(
+        chat_store.mark_generation_completed(
             context.generation_id,
             accumulated_content,
             completed_at,
@@ -651,7 +660,7 @@ def run_generation(generation_id: str) -> GenerationRunResult:
         completed_at = _now_ms()
         error_code = _error_code_for_exception(exc)
         error_message = _truncate_error(str(exc))
-        convex_sync.mark_generation_failed(
+        chat_store.mark_generation_failed(
             context.generation_id,
             error_code,
             error_message,
@@ -683,8 +692,6 @@ def run_generation(generation_id: str) -> GenerationRunResult:
 
 
 def _validate_chat_configuration():
-    if not Config.CHAT_INTERNAL_SECRET:
-        raise ChatConfigurationError("CHAT_INTERNAL_SECRET is not configured")
     if not Config.LLM_API_KEY:
         raise ChatConfigurationError("LLM_API_KEY is not configured")
     if not Config.LLM_MODEL:

@@ -2,19 +2,22 @@
 
 import { useState } from 'react';
 import { OnboardingSlide } from './OnboardingSlide';
+import { startOnboarding, type ApiUser } from '@/lib/api';
 
 const BACKGROUND_COLOR = '#1b8f4b';
 
-export function WelcomeStep() {
+interface WelcomeStepProps {
+  onUserUpdate: (user: ApiUser) => void;
+}
+
+export function WelcomeStep({ onUserUpdate }: WelcomeStepProps) {
   const [loading, setLoading] = useState(false);
 
   const handleGetStarted = async () => {
     setLoading(true);
     try {
-      await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/api/user/onboarding/start`, {
-        method: 'POST',
-        credentials: 'include',
-      });
+      const response = await startOnboarding();
+      onUserUpdate(response.user);
     } catch (error) {
       console.error('Failed to start onboarding:', error);
       setLoading(false);

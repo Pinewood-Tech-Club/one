@@ -12,8 +12,8 @@ import ChatPage from '@/app/dashboard/chat/page';
 import UserPage from '@/app/dashboard/user/page';
 import { LoadingScreen } from '@/components/LoadingScreen';
 import { NavPill } from '@/components/NavPill';
-import { useQuery } from 'convex/react';
-import { api } from '../../convex/_generated/api';
+import { useLiveQuery } from '@/hooks/useLiveQuery';
+import { getUser, type ApiUser } from '@/lib/api';
 import posthog from 'posthog-js';
 import { CalendarDays, ChartNoAxesColumnIncreasing, Flag, MessageCircleMore } from 'lucide-react';
 
@@ -59,11 +59,15 @@ function pageToPathname(page: Page): string {
 
 function AppLayoutInner() {
   const pathname = usePathname();
-  const [userName, setUserName] = useState<string>('Loading...');
-  const [userId, setUserId] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState<Page>(() => pathnameToPage(pathname));
   const { setLoading } = useLoading();
-  const convexUser = useQuery(api.users.getUser);
+  const { data: user, isLoading: userLoading } = useLiveQuery<ApiUser>({
+    fetcher: getUser,
+    events: [{ type: 'user.updated', apply: (d) => (d.user ?? d) as ApiUser }],
+  });
+
+  const userName = user?.name ?? 'Loading...';
+  const userId = user?.email ?? null;
 
   // Sync pathname → page (browser back/forward)
   useEffect(() => {
@@ -87,26 +91,8 @@ function AppLayoutInner() {
   }, [currentPage, pathname]);
 
   useEffect(() => {
-    const fetchUser = async () => {
-      setLoading('user-fetch', true);
-      try {
-        const response = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/api/user`, {
-          credentials: 'include',
-        });
-        if (response.ok) {
-          const data = await response.json();
-          setUserName(data.name);
-          setUserId(data.email);
-        }
-      } catch (error) {
-        console.error('Failed to fetch user:', error);
-        setUserName('User');
-      } finally {
-        setLoading('user-fetch', false);
-      }
-    };
-    fetchUser();
-  }, [setLoading]);
+    setLoading('user-fetch', userLoading);
+  }, [userLoading, setLoading]);
 
   useEffect(() => {
     const refreshSchoologyData = async () => {
@@ -155,7 +141,7 @@ function AppLayoutInner() {
           onClick={() => setCurrentPage('user')}
         >
           <img
-            src={convexUser?.profilePictureUrl || "/banner-photos/afternoon/001.webp"}
+            src={user?.profile_picture_url || "/banner-photos/afternoon/001.webp"}
             alt="User"
             className="w-[38px] h-[38px] object-cover object-center rounded-full"
           />

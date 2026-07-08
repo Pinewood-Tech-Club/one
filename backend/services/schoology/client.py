@@ -4,6 +4,7 @@ Schoology API client wrapper
 import ipaddress
 import json
 import socket
+import time
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode, urljoin, urlparse
 from xml.sax.saxutils import escape
@@ -12,12 +13,7 @@ import requests
 import requests_oauthlib
 import schoolopy
 
-from .convex_sync import (
-    clear_cache,
-    sync_course_assignments,
-    sync_courses,
-    sync_profile_picture,
-)
+from db import app_users, schoology_cache_store
 
 # SSRF guard settings for outbound binary downloads (attachment URLs come from
 # scraped third-party data and must not be trusted blindly).
@@ -58,7 +54,8 @@ def validate_outbound_url(url: str) -> None:
 
 class SchoologyService:
     """
-    Wrapper around schoolopy that handles Schoology API calls and Convex synchronization.
+    Wrapper around schoolopy that handles Schoology API calls and refreshes the
+    local SQLite cache.
 
     Usage:
         service = SchoologyService(
@@ -67,16 +64,15 @@ class SchoologyService:
             access_token_secret="secret",
             consumer_key="key",
             consumer_secret="secret",
-            convex_url="https://...",
             schoology_domain="https://app.schoology.com"
         )
 
-        courses = service.get_courses()  # Fetches and syncs to Convex
+        courses = service.get_courses()  # Fetches and refreshes the cache
         assignments = service.get_upcoming_assignments(days=7)
     """
 
     def __init__(self, user_id: str, access_token: str | None, access_token_secret: str | None,
-                 consumer_key: str, consumer_secret: str, convex_url: str,
+                 consumer_key: str, consumer_secret: str,
                  schoology_domain: str = "https://app.schoology.com",
                  schoology_api_domain: str = "https://api.schoology.com"):
         """
@@ -88,12 +84,10 @@ class SchoologyService:
             access_token_secret: OAuth access token secret (three-legged) or None (two-legged)
             consumer_key: Schoology consumer key
             consumer_secret: Schoology consumer secret
-            convex_url: Convex deployment URL
             schoology_domain: Schoology domain URL (default: https://app.schoology.com)
             schoology_api_domain: Schoology API domain (default: https://api.schoology.com)
         """
         self.user_id = user_id
-        self.convex_url = convex_url
         self.consumer_key = consumer_key
         self.consumer_secret = consumer_secret
         self.access_token = access_token
@@ -303,12 +297,13 @@ class SchoologyService:
 
         return payloads
 
-    def get_courses(self, sync_to_convex: bool = True) -> list[dict]:
+    def get_courses(self, sync_to_cache: bool = True) -> list[dict]:
         """
         Fetch user's courses from Schoology
 
         Args:
-            sync_to_convex: Whether to sync to Convex cache (default: True)
+            sync_to_cache: Whether to refresh the local cache (default: True).
+                Name retained for cross-package call-site compatibility.
 
         Returns:
             List of course dictionaries
@@ -316,21 +311,23 @@ class SchoologyService:
         sections = self.sc.get_sections()
         courses = [section.__dict__ for section in sections]
 
-        if sync_to_convex:
-            sync_courses(self.convex_url, self.user_id, courses)
+        if sync_to_cache:
+            schoology_cache_store.update_courses(
+                int(self.user_id), courses, int(time.time() * 1000)
+            )
 
         return courses
 
-    def get_sections(self, sync_to_convex: bool = False) -> list[dict]:
+    def get_sections(self, sync_to_cache: bool = False) -> list[dict]:
         """
         Fetch sections visible to the current credential owner.
         """
-        return self.get_courses(sync_to_convex=sync_to_convex)
+        return self.get_courses(sync_to_cache=sync_to_cache)
 
     def get_assignments(
         self,
         course_id: str,
-        sync_to_convex: bool = True,
+        sync_to_cache: bool = True,
         *,
         with_attachments: bool = False,
     ) -> list[dict]:
@@ -339,7 +336,8 @@ class SchoologyService:
 
         Args:
             course_id: Schoology section/course ID
-            sync_to_convex: Whether to sync to Convex cache (default: True)
+            sync_to_cache: Whether to refresh the local cache (default: True).
+                Name retained for cross-package call-site compatibility.
 
         Returns:
             List of assignment dictionaries
@@ -349,8 +347,10 @@ class SchoologyService:
             with_attachments=with_attachments,
         )
 
-        if sync_to_convex:
-            sync_course_assignments(self.convex_url, self.user_id, str(course_id), assignment_dicts)
+        if sync_to_cache:
+            schoology_cache_store.update_course_assignments(
+                int(self.user_id), str(course_id), assignment_dicts, int(time.time() * 1000)
+            )
 
         return assignment_dicts
 
@@ -773,13 +773,14 @@ class SchoologyService:
 
     def refresh_all(self) -> dict:
         """
-        Refresh all courses and their assignments in Convex cache
+        Refresh all courses and their assignments in the local cache
 
         Returns:
             Dictionary with success status and counts
         """
-        # Fetch and sync courses
-        courses = self.get_courses(sync_to_convex=True)
+        # Fetch and cache courses
+        courses = self.get_courses(sync_to_cache=True)
+        now_ms = int(time.time() * 1000)
         assignments_by_course = self._fetch_assignments_for_sections([
             course["id"]
             for course in courses
@@ -794,7 +795,9 @@ class SchoologyService:
             try:
                 course_id = str(course["id"])
                 assignments = assignments_by_course.get(course_id, [])
-                sync_course_assignments(self.convex_url, self.user_id, course_id, assignments)
+                schoology_cache_store.update_course_assignments(
+                    int(self.user_id), course_id, assignments, now_ms
+                )
                 total_assignments += len(assignments)
                 for assignment in assignments:
                     due_date = self._parse_due_datetime(assignment.get("due"))
@@ -808,7 +811,7 @@ class SchoologyService:
         try:
             user_info = self.get_user_info()
             if user_info.get("picture_url"):
-                sync_profile_picture(self.convex_url, self.user_id, user_info["picture_url"])
+                app_users.set_profile_picture_url(int(self.user_id), user_info["picture_url"])
         except Exception as e:
             print(f"[WARNING] Error refreshing profile picture: {e}")
 
@@ -821,9 +824,9 @@ class SchoologyService:
 
     def disconnect(self):
         """
-        Clear user's Convex cache (called when user disconnects Schoology)
+        Clear the user's local cache (called when user disconnects Schoology)
         """
-        clear_cache(self.convex_url, self.user_id)
+        schoology_cache_store.clear_user_cache(int(self.user_id))
 
     def get_user_info(self) -> dict:
         """

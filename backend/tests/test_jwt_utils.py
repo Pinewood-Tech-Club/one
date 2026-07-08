@@ -1,6 +1,5 @@
 """
-Tests for auth/jwt_utils.py — RS256 minting/verification for the Convex and
-mobile audiences, plus the JWKS document.
+Tests for auth/jwt_utils.py — RS256 minting/verification for the mobile audience.
 
 Security-critical: covers expiry, signature tampering, payload tampering,
 audience/issuer confusion, alg=none, and cross-key forgery.
@@ -17,16 +16,11 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from auth import jwt_utils
 from auth.jwt_utils import (
     JWT_ALGORITHM,
-    JWT_CONVEX_AUDIENCE,
-    JWT_DEFAULT_CONVEX_EXPIRATION_HOURS,
     JWT_ISSUER,
     JWT_KEY_ID,
     JWT_MOBILE_AUDIENCE,
-    create_convex_token,
     create_mobile_access_token,
     create_token,
-    get_jwks,
-    verify_convex_token,
     verify_mobile_access_token,
     verify_token,
 )
@@ -97,36 +91,16 @@ class TestMintAndVerify:
         assert "jti" not in claims
         assert "device_id" not in claims
 
-    def test_convex_default_expiry_is_24h(self):
-        # Default Convex TTL must be exactly JWT_DEFAULT_CONVEX_EXPIRATION_HOURS hours.
-        token = create_convex_token(**USER)
-        claims = verify_convex_token(token)
-        expected = JWT_DEFAULT_CONVEX_EXPIRATION_HOURS * 3600
-        assert claims["exp"] - claims["iat"] == expected
-        assert expected == 24 * 3600
-
     def test_mobile_default_expiry_matches_config_ttl(self):
-        # Default mobile TTL must come from Config.MOBILE_ACCESS_TOKEN_TTL_SECONDS,
-        # and it must differ from the Convex default so the audience branch matters.
+        # Default mobile TTL must come from Config.MOBILE_ACCESS_TOKEN_TTL_SECONDS.
         token = create_token(**USER, audience=JWT_MOBILE_AUDIENCE)
         claims = verify_token(token, audience=JWT_MOBILE_AUDIENCE)
         assert claims["exp"] - claims["iat"] == Config.MOBILE_ACCESS_TOKEN_TTL_SECONDS
-        assert Config.MOBILE_ACCESS_TOKEN_TTL_SECONDS != JWT_DEFAULT_CONVEX_EXPIRATION_HOURS * 3600
-
-    def test_audience_selects_default_expiry(self):
-        # The `audience == JWT_CONVEX_AUDIENCE` guard must map each audience to its
-        # own default TTL; flipping the comparison swaps these and fails here.
-        convex = verify_convex_token(create_token(**USER, audience=JWT_CONVEX_AUDIENCE))
-        mobile = verify_token(
-            create_token(**USER, audience=JWT_MOBILE_AUDIENCE), audience=JWT_MOBILE_AUDIENCE
-        )
-        assert convex["exp"] - convex["iat"] == JWT_DEFAULT_CONVEX_EXPIRATION_HOURS * 3600
-        assert mobile["exp"] - mobile["iat"] == Config.MOBILE_ACCESS_TOKEN_TTL_SECONDS
 
     def test_explicit_expiry_overrides_default(self):
         # An explicit expires_in_seconds must be honored verbatim (the None-guard branch).
-        token = create_token(**USER, audience=JWT_CONVEX_AUDIENCE, expires_in_seconds=3600)
-        claims = verify_convex_token(token)
+        token = create_token(**USER, audience=JWT_MOBILE_AUDIENCE, expires_in_seconds=3600)
+        claims = verify_token(token, audience=JWT_MOBILE_AUDIENCE)
         assert claims["exp"] - claims["iat"] == 3600
 
     def test_iat_is_current_time(self):
@@ -143,12 +117,6 @@ class TestMintAndVerify:
         assert "jti" in claims
         assert len(claims["jti"]) == 32
         assert all(c in "0123456789abcdef" for c in claims["jti"])
-
-    def test_convex_token_helpers(self):
-        token = create_convex_token(**USER)
-        claims = verify_convex_token(token)
-        assert claims is not None
-        assert claims["aud"] == JWT_CONVEX_AUDIENCE
 
     def test_mobile_access_token_carries_device_and_unique_jti(self):
         t1 = create_mobile_access_token(**USER, device_id="device-abc")
@@ -180,11 +148,14 @@ class TestRejection:
         assert verify_token(f"{header}.{forged_payload}.{signature}", audience=JWT_MOBILE_AUDIENCE) is None
 
     def test_wrong_audience_rejected(self):
+        # Cross-audience confusion must fail in both directions. A token minted for
+        # the mobile audience must not verify against a different audience, and a
+        # token minted for a different audience must not verify as mobile.
+        other_audience = "some_other_service"
         mobile_token = create_mobile_access_token(**USER, device_id="device-abc")
-        convex_token = create_convex_token(**USER)
-        # Cross-audience confusion must fail in both directions.
-        assert verify_convex_token(mobile_token) is None
-        assert verify_mobile_access_token(convex_token) is None
+        other_token = create_token(**USER, audience=other_audience)
+        assert verify_token(mobile_token, audience=other_audience) is None
+        assert verify_mobile_access_token(other_token) is None
 
     def test_wrong_issuer_rejected(self):
         now = datetime.now(timezone.utc)
@@ -301,77 +272,6 @@ class TestRejection:
         # still verify, so the expiry check is a real boundary and not "always reject".
         token = create_token(**USER, audience=JWT_MOBILE_AUDIENCE, expires_in_seconds=30)
         assert verify_token(token, audience=JWT_MOBILE_AUDIENCE) is not None
-
-
-class TestJwks:
-    def test_jwks_matches_signing_key(self):
-        jwks = get_jwks()
-        assert len(jwks["keys"]) == 1
-        key = jwks["keys"][0]
-        assert key["kty"] == "RSA"
-        assert key["use"] == "sig"
-        assert key["alg"] == "RS256"
-        assert key["kid"] == JWT_KEY_ID
-
-        public_numbers = jwt_utils._load_public_key().public_numbers()
-        n_bytes = _b64url_decode(key["n"])
-        e_bytes = _b64url_decode(key["e"])
-        n = int.from_bytes(n_bytes, "big")
-        e = int.from_bytes(e_bytes, "big")
-        assert n == public_numbers.n
-        assert e == public_numbers.e
-        # RFC 7518: minimal big-endian octet encoding, no spurious leading zero byte.
-        assert len(n_bytes) == (public_numbers.n.bit_length() + 7) // 8
-        assert len(e_bytes) == (public_numbers.e.bit_length() + 7) // 8
-        assert n_bytes[0] != 0
-        assert e_bytes[0] != 0
-
-    def test_jwks_key_verifies_minted_token(self):
-        # A verifier that only has the JWKS must be able to verify our tokens.
-        token = create_convex_token(**USER)
-        jwks = get_jwks()
-        public_key = pyjwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(jwks["keys"][0]))
-        claims = pyjwt.decode(
-            token,
-            public_key,
-            algorithms=["RS256"],
-            audience=JWT_CONVEX_AUDIENCE,
-            issuer=JWT_ISSUER,
-        )
-        assert claims["sub"] == "42"
-
-    def test_jwks_exposes_standard_rsa_exponent(self):
-        # e must round-trip to 65537 (the public_exponent the keys are generated with);
-        # this also pins _int_to_base64url's byte-length math against off-by-one mutants.
-        key = get_jwks()["keys"][0]
-        e = int.from_bytes(_b64url_decode(key["e"]), "big")
-        assert e == 65537
-
-    def test_jwks_modulus_is_2048_bit(self):
-        # n must be the full RSA-2048 modulus; a truncated/padded byte length would
-        # change its bit length. Bounds allow for the top bit occasionally being 0.
-        key = get_jwks()["keys"][0]
-        n = int.from_bytes(_b64url_decode(key["n"]), "big")
-        assert 2040 <= n.bit_length() <= 2048
-
-    def test_jwks_base64url_has_no_padding(self):
-        # JWKS members must be unpadded base64url per RFC 7515/7518.
-        key = get_jwks()["keys"][0]
-        assert "=" not in key["n"] and "=" not in key["e"]
-        assert "+" not in key["n"] and "/" not in key["n"]
-
-
-class TestIntToBase64Url:
-    def test_roundtrips_arbitrary_integers(self):
-        # Directly pin the encoder: decode must recover the exact integer.
-        for value in (1, 255, 256, 65537, 2 ** 32 - 1, 2 ** 64, 123456789012345678901234567890):
-            encoded = jwt_utils._int_to_base64url(value)
-            raw = _b64url_decode(encoded)
-            assert "=" not in encoded  # unpadded
-            assert int.from_bytes(raw, "big") == value
-            # Minimal encoding: exact byte length, no spurious leading zero byte.
-            assert len(raw) == (value.bit_length() + 7) // 8
-            assert raw[0] != 0
 
 
 class TestEnvKeyPairGuard:

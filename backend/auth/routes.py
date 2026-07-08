@@ -4,35 +4,18 @@ Authentication routes
 import hmac
 import logging
 import secrets
-import threading
 
 from flask import Blueprint, jsonify, redirect, request, session
 
 from auth.google import exchange_code_for_token, get_google_auth_url, get_user_info
 from config import Config
+from db.app_users import ensure_app_state
 from db.sessions import create_session, delete_session
 from db.users import get_or_create_user
-from onboarding import get_or_create_user as convex_get_or_create_user
 
 logger = logging.getLogger(__name__)
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/auth')
-
-
-def _bootstrap_convex_user(user_id: int):
-    try:
-        convex_get_or_create_user(Config.CONVEX_URL, str(user_id))
-    except Exception as exc:
-        logger.warning("Failed to create Convex user record for user %s: %s", user_id, exc)
-
-
-def _bootstrap_convex_user_async(user_id: int):
-    threading.Thread(
-        target=_bootstrap_convex_user,
-        args=(user_id,),
-        daemon=True,
-        name=f"convex-bootstrap-{user_id}",
-    ).start()
 
 
 @auth_bp.route("/google")
@@ -87,8 +70,11 @@ def auth_google_callback():
         # Get or create user account
         user_id = get_or_create_user(google_user_id, email, name)
 
-        # Convex bootstrap can block on network; run it in the background.
-        _bootstrap_convex_user_async(user_id)
+        # Initialize app-state (onboarding/consent) for this user in SQLite.
+        try:
+            ensure_app_state(user_id)
+        except Exception as exc:
+            logger.warning("Failed to initialize app state for user %s: %s", user_id, exc)
 
         # Create session
         session_id = create_session(user_id)

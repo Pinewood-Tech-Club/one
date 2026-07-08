@@ -12,9 +12,9 @@ from pathlib import Path
 from typing import Any
 
 from config import Config
+from db.app_users import list_eligible_scraper_users
 from db.init import init_scraper_db
 from db.tokens import get_schoology_tokens
-from onboarding.convex_sync import list_eligible_scraper_users
 from services.schoology.runtime import create_schoology_service
 
 from . import store
@@ -32,7 +32,7 @@ def _coerce_backend_user_id(value: Any) -> int | None:
 
 def refresh_eligible_user_memberships() -> dict[str, int]:
     now = store.utcnow()
-    convex_users = list_eligible_scraper_users(Config.CONVEX_URL)
+    convex_users = list_eligible_scraper_users()
     eligible_count = 0
     refreshed_count = 0
 
@@ -64,7 +64,7 @@ def refresh_eligible_user_memberships() -> dict[str, int]:
 
         eligible_count += 1
         try:
-            sections = service.get_sections(sync_to_convex=False)
+            sections = service.get_sections(sync_to_cache=False)
             store.refresh_user_section_memberships(user_id, sections, now)
             store.mark_user_sections_refreshed(user_id, now)
             refreshed_count += 1

@@ -2,22 +2,23 @@
 
 import { useState } from 'react';
 import { OnboardingSlide } from './OnboardingSlide';
+import { saveConsent, type ApiUser } from '@/lib/api';
 
 const BACKGROUND_COLOR = '#7c3aed';
 
-export function SmartConsentStep() {
+interface SmartConsentStepProps {
+  onUserUpdate: (user: ApiUser) => void;
+}
+
+export function SmartConsentStep({ onUserUpdate }: SmartConsentStepProps) {
   const [enabled, setEnabled] = useState(true);
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async () => {
     setLoading(true);
     try {
-      await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/api/user/consent`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled, version: '1.0' }),
-      });
+      const response = await saveConsent({ enabled, version: '1.0' });
+      onUserUpdate(response.user);
     } catch (error) {
       console.error('Failed to save consent:', error);
       setLoading(false);

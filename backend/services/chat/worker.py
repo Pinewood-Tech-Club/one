@@ -5,11 +5,12 @@ import logging
 import sys
 import time
 
+from db import chat_store
+
 from . import (
     ChatConfigurationError,
     ChatContractError,
     ChatGenerationNotFoundError,
-    convex_sync,
     live_stream,
     run_generation,
 )
@@ -24,7 +25,7 @@ def _now_ms() -> int:
 def _mark_failed(generation_id: str, error_code: str, error_message: str) -> None:
     completed_at = _now_ms()
     try:
-        convex_sync.mark_generation_failed(
+        chat_store.mark_generation_failed(
             generation_id,
             error_code,
             error_message,

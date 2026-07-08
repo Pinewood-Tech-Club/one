@@ -9,9 +9,10 @@ from db.encryption import decrypt_token
 
 
 def init_db():
-    """Initialize both databases"""
+    """Initialize all databases"""
     init_sessions_db()
     init_main_db()
+    init_chat_db()
     init_scraper_db()
 
 
@@ -99,6 +100,241 @@ def init_main_db():
     )
 
     init_mobile_db(cursor)
+    migrate_user_app_state(cursor)
+    init_user_preferences(cursor)
+    init_schoology_cache(cursor)
+
+    conn.commit()
+    conn.close()
+
+
+def migrate_user_app_state(cursor: sqlite3.Cursor) -> None:
+    """Idempotently add the per-user app-state columns (formerly the Convex users table)."""
+    columns = {row[1] for row in cursor.execute("PRAGMA table_info(users)").fetchall()}
+    additions = [
+        ("onboarding_step", "TEXT NOT NULL DEFAULT 'welcome'"),
+        ("schoology_connected", "INTEGER NOT NULL DEFAULT 0"),
+        ("smart_features_consent_json", "TEXT"),
+        ("profile_picture_url", "TEXT"),
+        ("app_state_updated_at", "INTEGER"),
+    ]
+    for name, definition in additions:
+        if name not in columns:
+            cursor.execute(f"ALTER TABLE users ADD COLUMN {name} {definition}")
+
+
+def init_user_preferences(cursor: sqlite3.Cursor) -> None:
+    cursor.execute(
+        """
+    CREATE TABLE IF NOT EXISTS user_preferences (
+        user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        sidebar_collapsed INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL
+    )
+    """
+    )
+
+
+def init_schoology_cache(cursor: sqlite3.Cursor) -> None:
+    """Schoology cache tables (formerly the Convex schoologyCache tables)."""
+    cursor.execute(
+        """
+    CREATE TABLE IF NOT EXISTS schoology_courses (
+        course_id TEXT PRIMARY KEY,
+        data_json TEXT NOT NULL,
+        last_synced_at INTEGER
+    )
+    """
+    )
+
+    cursor.execute(
+        """
+    CREATE TABLE IF NOT EXISTS schoology_course_memberships (
+        user_id INTEGER NOT NULL,
+        course_id TEXT NOT NULL,
+        role TEXT,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        last_synced_at INTEGER NOT NULL,
+        PRIMARY KEY (user_id, course_id)
+    )
+    """
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sch_memberships_course "
+        "ON schoology_course_memberships (course_id)"
+    )
+
+    cursor.execute(
+        """
+    CREATE TABLE IF NOT EXISTS schoology_assignments (
+        course_id TEXT NOT NULL,
+        assignment_id TEXT NOT NULL,
+        due_at_ms INTEGER,
+        due_raw TEXT,
+        data_json TEXT NOT NULL,
+        last_synced_at INTEGER,
+        PRIMARY KEY (course_id, assignment_id)
+    )
+    """
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sch_assignments_course_due "
+        "ON schoology_assignments (course_id, due_at_ms)"
+    )
+
+    cursor.execute(
+        """
+    CREATE TABLE IF NOT EXISTS schoology_assignment_user_state (
+        user_id INTEGER NOT NULL,
+        course_id TEXT NOT NULL,
+        assignment_id TEXT NOT NULL,
+        completed INTEGER,
+        completion_status TEXT,
+        grade TEXT,
+        data_json TEXT,
+        last_synced_at INTEGER NOT NULL,
+        PRIMARY KEY (user_id, course_id, assignment_id)
+    )
+    """
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sch_aus_user_assignment "
+        "ON schoology_assignment_user_state (user_id, assignment_id)"
+    )
+
+
+def init_chat_db():
+    """Initialize the dedicated chat database (write-hot path, isolated from main.db)."""
+    conn = sqlite3.connect(Config.CHAT_DB_PATH)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+    CREATE TABLE IF NOT EXISTS chat_threads (
+        id TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        last_message_at INTEGER NOT NULL,
+        archived_at INTEGER
+    )
+    """
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_chat_threads_user_updated "
+        "ON chat_threads (user_id, updated_at)"
+    )
+
+    cursor.execute(
+        """
+    CREATE TABLE IF NOT EXISTS chat_messages (
+        id TEXT PRIMARY KEY,
+        thread_id TEXT NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL,
+        role TEXT NOT NULL CHECK (role IN ('user','assistant','system')),
+        content TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL CHECK (status IN ('queued','streaming','completed','failed','cancelled')),
+        chunk_sequence INTEGER,
+        provider_message_id TEXT,
+        error TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        completed_at INTEGER
+    )
+    """
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_chat_messages_thread_created "
+        "ON chat_messages (thread_id, created_at)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_chat_messages_user_thread "
+        "ON chat_messages (user_id, thread_id)"
+    )
+
+    cursor.execute(
+        """
+    CREATE TABLE IF NOT EXISTS chat_generations (
+        id TEXT PRIMARY KEY,
+        thread_id TEXT NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL,
+        user_message_id TEXT NOT NULL,
+        assistant_message_id TEXT NOT NULL,
+        client_request_id TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('queued','streaming','completed','failed','cancelled')),
+        activity TEXT CHECK (activity IN ('thinking','streaming_text','tool_running','post_tool_reasoning')),
+        provider TEXT NOT NULL DEFAULT '',
+        model TEXT NOT NULL DEFAULT '',
+        cancel_requested INTEGER NOT NULL DEFAULT 0,
+        error_code TEXT,
+        error_message TEXT,
+        provider_message_id TEXT,
+        usage_json TEXT,
+        tool_trace_summary TEXT,
+        tool_trace_stats_json TEXT,
+        created_at INTEGER NOT NULL,
+        started_at INTEGER,
+        updated_at INTEGER NOT NULL,
+        completed_at INTEGER,
+        last_text_at INTEGER
+    )
+    """
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_chat_generations_thread_status "
+        "ON chat_generations (thread_id, status)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_chat_generations_user "
+        "ON chat_generations (user_id)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_chat_generations_status_updated "
+        "ON chat_generations (status, updated_at)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_chat_generations_assistant_msg "
+        "ON chat_generations (assistant_message_id)"
+    )
+    cursor.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_generations_user_request "
+        "ON chat_generations (user_id, client_request_id)"
+    )
+
+    cursor.execute(
+        """
+    CREATE TABLE IF NOT EXISTS chat_tool_calls (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        generation_id TEXT NOT NULL REFERENCES chat_generations(id) ON DELETE CASCADE,
+        thread_id TEXT NOT NULL,
+        user_id INTEGER NOT NULL,
+        sequence INTEGER NOT NULL,
+        call_id TEXT NOT NULL,
+        tool_name TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('pending','running','completed','failed')),
+        arguments_text TEXT,
+        output_text TEXT,
+        summary_text TEXT,
+        error_text TEXT,
+        started_at INTEGER,
+        completed_at INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        UNIQUE (generation_id, call_id)
+    )
+    """
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_chat_tool_calls_generation_seq "
+        "ON chat_tool_calls (generation_id, sequence)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_chat_tool_calls_thread_created "
+        "ON chat_tool_calls (thread_id, created_at)"
+    )
 
     conn.commit()
     conn.close()

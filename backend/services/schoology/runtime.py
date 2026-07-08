@@ -30,7 +30,6 @@ def create_schoology_service(user_id: int) -> SchoologyService | None:
             access_token_secret=access_token_secret,
             consumer_key=Config.SCHOOLOGY_CONSUMER_KEY,
             consumer_secret=Config.SCHOOLOGY_CONSUMER_SECRET,
-            convex_url=Config.CONVEX_URL,
             schoology_domain=Config.SCHOOLOGY_DOMAIN,
             schoology_api_domain=Config.SCHOOLOGY_API_DOMAIN,
         )
@@ -46,7 +45,6 @@ def create_schoology_service(user_id: int) -> SchoologyService | None:
             access_token_secret=None,
             consumer_key=consumer_key,
             consumer_secret=consumer_secret,
-            convex_url=Config.CONVEX_URL,
             schoology_domain=Config.SCHOOLOGY_DOMAIN,
             schoology_api_domain=Config.SCHOOLOGY_API_DOMAIN,
         )

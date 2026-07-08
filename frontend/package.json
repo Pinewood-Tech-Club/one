@@ -12,7 +12,6 @@
   },
   "dependencies": {
     "@types/mdx": "^2.0.13",
-    "convex": "^1.31.7",
     "fumadocs-core": "^16.5.0",
     "fumadocs-mdx": "^14.2.6",
     "fumadocs-ui": "^16.5.0",

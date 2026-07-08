@@ -10,13 +10,15 @@ from api.routes import api_bp
 
 # Import blueprints
 from auth.routes import auth_bp
+from chat.routes import chat_api_bp
 from config import Config
 from db.init import init_db
+from events.routes import events_bp
 from extensions import limiter
-from internal_chat.routes import internal_chat_bp
 from mobile.routes import mobile_bp
 from schoology.routes import oauth_bp as schoology_oauth_bp
 from schoology.routes import schoology_api_bp
+from services.chat.reaper import start_reaper
 
 
 def create_app():
@@ -47,10 +49,14 @@ def create_app():
     # Register blueprints
     app.register_blueprint(auth_bp)
     app.register_blueprint(api_bp)
-    app.register_blueprint(internal_chat_bp)
+    app.register_blueprint(events_bp)
+    app.register_blueprint(chat_api_bp)
     app.register_blueprint(schoology_oauth_bp)
     app.register_blueprint(schoology_api_bp)
     app.register_blueprint(mobile_bp)
+
+    # Stale-generation reaper (single process, use_reloader=False → starts once)
+    start_reaper()
 
     @app.errorhandler(429)
     def handle_rate_limit(_error):
@@ -60,16 +66,9 @@ def create_app():
 
 
 if __name__ == "__main__":
-    # Never enable the Werkzeug debugger by default: it exposes an interactive
-    # console and full stack traces to anyone who can reach the port. Opt in
-    # explicitly via FLASK_DEBUG, and force it off in production regardless.
-    debug = (
-        os.environ.get("FLASK_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
-        and not Config.is_production()
-    )
     app = create_app()
     app.run(
-        debug=debug,
+        debug=True,
         threaded=True,
         use_reloader=False,
         port=3111,

@@ -1,8 +1,8 @@
 """
-Schoology Service - Python package for Schoology API wrapper and Convex sync
+Schoology Service - Python package for Schoology API wrapper and cache sync
 
 This package provides a clean interface to interact with the Schoology API
-and synchronize data to Convex cache.
+and synchronize data to the local cache.
 """
 
 from .client import SchoologyService

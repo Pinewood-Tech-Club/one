@@ -406,7 +406,7 @@ def _assignment_detail(arguments: dict[str, Any], *, user_id: int) -> ToolExecut
         service = create_schoology_service(user_id)
         if not service:
             raise SchoologyToolError("Schoology is not connected for this user")
-        for assignment in service.get_assignments(section_id, sync_to_convex=False, with_attachments=True):
+        for assignment in service.get_assignments(section_id, sync_to_cache=False, with_attachments=True):
             candidate_id = str(assignment.get("id") or assignment.get("grade_item_id") or "")
             if candidate_id != schoology_id:
                 continue
