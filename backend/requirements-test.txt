@@ -9,4 +9,4 @@ python-dotenv>=1.2.2
 
 # Mutation testing. mutmut 3.x is pytest-native and reads its config from the
 # [tool.mutmut] section of pyproject.toml. See tests/README.md.
-mutmut>=3.6
+mutmut>=3.7.0
