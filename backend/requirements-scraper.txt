@@ -1,0 +1,9 @@
+# Attachment text extraction for the scraper. docling pulls in torch and the
+# IBM layout models — roughly 1 GB unpacked, versus ~200 MB for everything in
+# requirements.txt. services/scraper/extraction.py imports it behind a
+# try/except and records "docling_unavailable" when it is missing, so the API
+# and the scraper both run correctly without this file installed; only
+# PDF/DOCX/PPTX text extraction is skipped.
+-r requirements.txt
+
+docling==2.118.1

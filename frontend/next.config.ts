@@ -2,6 +2,10 @@ import type { NextConfig } from "next";
 import { createMDX } from 'fumadocs-mdx/next';
 
 const nextConfig: NextConfig = {
+  // Emits .next/standalone with a self-contained server.js and only the
+  // production dependencies it actually traced, which is what the Docker
+  // runtime stage copies.
+  output: "standalone",
   async rewrites() {
     return [
       {

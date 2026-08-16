@@ -1,0 +1,25 @@
+env/
+.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+
+# Local state — the container gets these on its /data volume instead.
+*.db
+*.db-shm
+*.db-wal
+storage/
+keys/
+.env
+.env.*
+
+.pytest_cache/
+.mutmut-cache
+mutants/
+tests/
+htmlcov/
+.coverage
+
+.DS_Store
+cloudflared-config.yml

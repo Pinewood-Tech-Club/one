@@ -1,0 +1,53 @@
+# Local parity with the Coolify deployment. Production runs these as two
+# separate Coolify applications against a managed Redis; this file exists so the
+# same images can be exercised locally before promoting to prod.
+#
+#   docker compose up --build
+#
+# Reads secrets from backend/.env — it does not invent them.
+
+services:
+  redis:
+    image: redis:8-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      args:
+        INSTALL_DOCLING: "false"
+    env_file:
+      - ./backend/.env
+    environment:
+      FLASK_ENV: development
+      UPSTASH_REDIS_URL: redis://redis:6379
+      FRONTEND_URL: http://localhost:3112
+      BACKEND_URL: http://localhost:3111
+    ports:
+      - "3111:3111"
+    volumes:
+      - backend-data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_BACKEND_URL: http://localhost:3111
+    ports:
+      - "3112:3112"
+    depends_on:
+      - backend
+
+volumes:
+  redis-data:
+  backend-data:

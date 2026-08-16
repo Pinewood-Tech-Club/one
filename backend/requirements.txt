@@ -24,4 +24,4 @@ redis==8.1.0
 google-api-python-client==2.198.0
 google-auth==2.56.3
 google-auth-oauthlib==1.4.0
-docling==2.118.1
+gunicorn==23.0.0
