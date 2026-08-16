@@ -2,6 +2,19 @@
 
 This repository consolidates the backend and frontend application histories.
 
+## Branches
+
+> [!IMPORTANT]
+> **`main` is not production.** It is the default branch, so it is the one you
+> land on by cloning and the one pull requests target by default — but merging
+> into it deploys nothing.
+
+- `main` — default branch and integration trunk. Reviewed work merges here first.
+- `prod` — the production branch. What is on `prod` is what is live. Releases
+  happen by promoting `main` into `prod`, never by pushing to `prod` directly.
+
+If you are checking what users are actually running, read `prod`, not `main`.
+
 ## Local Commands
 
 - `make setup` runs the interactive onboarding wizard.
