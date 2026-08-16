@@ -27,16 +27,27 @@ start_scraper() {
   exec python -m services.scraper.scheduler --loop
 }
 
+# create_app() initialises every database, but the scraper reads users out of
+# main.db and does not create it — the scheduler only calls init_scraper_db().
+# Started alongside gunicorn it therefore races the web process and its first
+# tick dies on "no such table: users". Initialising up front makes the order
+# irrelevant; init_db() is idempotent.
+init_databases() {
+  python -c "from db.init import init_db; init_db()"
+}
+
 case "$MODE" in
   web)
     start_web
     ;;
   scraper)
+    init_databases
     start_scraper
     ;;
   all)
     # The scraper shares SQLite files with the API over the local filesystem,
     # so it runs beside it in this container rather than as a separate service.
+    init_databases
     python -m services.scraper.scheduler --loop &
     SCRAPER_PID=$!
     trap 'kill -TERM "$SCRAPER_PID" 2>/dev/null || true' TERM INT
