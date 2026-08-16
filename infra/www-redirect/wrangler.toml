@@ -1,0 +1,11 @@
+name = "pinewood-one-www-redirect"
+main = "src/index.js"
+compatibility_date = "2026-08-16"
+account_id = "d1687fcac82d7199c8c8af57bbe570fc"
+
+# custom_domain = true makes Cloudflare manage the DNS record for this hostname.
+# The record it creates is read-only in the DNS API; to point www elsewhere later,
+# remove this binding rather than trying to edit the record.
+[[routes]]
+pattern = "www.pinewood.one"
+custom_domain = true
