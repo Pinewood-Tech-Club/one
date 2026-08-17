@@ -111,6 +111,8 @@ export function ConnectLmsStep({ mode = 'web', onUserUpdate }: ConnectLmsStepPro
         onClick={() => setOverrideOpen(true)}
         className="fixed bottom-3 right-3 text-[8px] cursor-default"
         style={{ color: BACKGROUND_COLOR }}
+        aria-hidden="true"
+        tabIndex={-1}
       >
         developer override
       </button>
