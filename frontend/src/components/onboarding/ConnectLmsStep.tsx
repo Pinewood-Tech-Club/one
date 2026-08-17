@@ -18,7 +18,6 @@ interface ConnectLmsStepProps {
 export function ConnectLmsStep({ mode = 'web', onUserUpdate }: ConnectLmsStepProps) {
   const searchParams = useSearchParams();
   const error = searchParams.get('error');
-  const allowDeveloperOverride = mode !== 'mobile' && process.env.NODE_ENV !== 'production';
   const [bridgeError, setBridgeError] = useState<string | null>(null);
   const [overrideOpen, setOverrideOpen] = useState(false);
   const [overrideClientId, setOverrideClientId] = useState('');
@@ -107,17 +106,18 @@ export function ConnectLmsStep({ mode = 'web', onUserUpdate }: ConnectLmsStepPro
         Connect Schoology
       </button>
 
-      {allowDeveloperOverride && (
-        <button
-          type="button"
-          onClick={() => setOverrideOpen(true)}
-          className="fixed bottom-3 right-3 text-xs opacity-5 hover:opacity-10 transition-opacity"
-        >
-          Tech Club Override
-        </button>
-      )}
+      <button
+        type="button"
+        onClick={() => setOverrideOpen(true)}
+        className="fixed bottom-3 right-3 text-[8px] cursor-default"
+        style={{ color: BACKGROUND_COLOR }}
+        aria-hidden="true"
+        tabIndex={-1}
+      >
+        developer override
+      </button>
 
-      {allowDeveloperOverride && overrideOpen && (
+      {overrideOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center px-6">
           <button
             type="button"
