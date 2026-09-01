@@ -6,4 +6,4 @@
 # PDF/DOCX/PPTX text extraction is skipped.
 -r requirements.txt
 
-docling==2.118.1
+docling==2.123.1
