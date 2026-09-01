@@ -24,4 +24,4 @@ redis==8.1.0
 google-api-python-client==2.199.0
 google-auth==2.57.0
 google-auth-oauthlib==1.4.1
-gunicorn==23.0.0
+gunicorn==26.2.0
