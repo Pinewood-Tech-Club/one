@@ -4,7 +4,7 @@
 # requirements file.
 pytest>=9.1.1
 cryptography>=50.0.1
-PyJWT>=2.13.0
+PyJWT>=2.14.0
 python-dotenv>=1.2.3
 
 # Mutation testing. mutmut 3.x is pytest-native and reads its config from the
