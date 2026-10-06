@@ -3,9 +3,9 @@
 # pinned here so the test suite can run without installing the full (heavy)
 # requirements file.
 pytest>=9.1.1
-cryptography>=50.0.1
-PyJWT>=2.15.0
-python-dotenv>=1.2.3
+cryptography>=50.0.2
+PyJWT>=2.15.1
+python-dotenv>=1.2.4
 
 # Mutation testing. mutmut 3.x is pytest-native and reads its config from the
 # [tool.mutmut] section of pyproject.toml. See tests/README.md.
