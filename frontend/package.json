@@ -48,7 +48,8 @@
       "motion": "13.2.0",
       "framer-motion": "13.2.0",
       "motion-dom": "13.2.0",
-      "motion-utils": "13.0.0"
+      "motion-utils": "13.0.0",
+      "zod": "4.6.7"
     }
   }
 }
