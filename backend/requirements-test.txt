@@ -2,7 +2,7 @@
 # PyJWT, and python-dotenv, which are already part of requirements.txt but are
 # pinned here so the test suite can run without installing the full (heavy)
 # requirements file.
-pytest>=9.1.1
+pytest>=9.2.0
 cryptography>=50.0.2
 PyJWT>=2.15.1
 python-dotenv>=1.2.4
